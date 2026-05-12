@@ -1,0 +1,30 @@
+# Claude Code session state
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Language artifacts (early; will be refined per service in Week 1)
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+go.sum.tmp

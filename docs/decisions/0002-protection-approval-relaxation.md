@@ -83,7 +83,7 @@ This ADR should be **reversed** (count set back to 1) when **any** of the follow
 
 1. Engineer #2 joins the repo with write access (also one of ADR-0001's revisit triggers — the same hire triggers both).
 2. The `galileoos.com` installer URL is live to external customers (Stage 1 GA — see STAGE_0_PLAN.md §Stage 0 success contract → Stage 1 entry).
-3. Any contributor with write access who is not Emmanuel joins as a reviewer (e.g., a paid contractor, a community PR from a trusted reviewer, an Anthropic Claude Code automation App with write scope).
+3. **Any human contributor with write access who is not Emmanuel joins as a reviewer** (e.g., a paid contractor, a community contributor invited as a collaborator). The Claude Code automation App getting write scope is a *different* case: it triggers reversal too (count back to ≥1), but Claude Code reviewing its own PRs after writing the code is the same actor wearing two hats — that is not maker/checker separation and cannot satisfy the approval requirement. Automation-with-write-scope handling gets its own follow-up ADR if it ever happens.
 4. The Stage 0 gate passes and the repo flips to public-facing distribution.
 
 Reversal procedure:

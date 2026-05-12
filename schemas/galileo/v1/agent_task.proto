@@ -1,0 +1,70 @@
+// Agent task contract — request/response carried between the agent
+// runner (Go) and the agent business logic (Python via gRPC), and
+// returned to the gateway. Mirrors the Temporal workflow signature
+// sketched in plan §4.3 "Concrete pattern."
+
+syntax = "proto3";
+
+package galileo.v1;
+
+import "galileo/v1/tenant.proto";
+
+option go_package = "github.com/MannyAmah/GalileoOS/kernel/gen/galileo/v1;galileov1";
+
+// TaskInput is the request to run an agent on a goal.
+message TaskInput {
+  TenantContext tenant = 1;
+
+  // Department slug ("marketing", "sales", "support", etc.).
+  // Stage 0 only ships "hello" for the demo agent.
+  string department = 2;
+
+  // The natural-language goal the operator (or upstream agent) wants
+  // executed. Free-form; size capped at the gateway.
+  string goal = 3;
+
+  // Optional Skill version pins. If empty, the registry resolves to
+  // the tenant's current head pins for the department.
+  repeated SkillRef skill_refs = 4;
+}
+
+// SkillRef pins a Skill by name + semver. Versions live in the per-
+// tenant Skill registry (plan §4.5).
+message SkillRef {
+  string name = 1;
+  string version = 2;
+}
+
+// AgentOutput is what the agent's reasoning produced — the structured
+// draft, any tool calls it wants to invoke, and the cost it incurred.
+message AgentOutput {
+  // Markdown body of the agent's response.
+  string body = 1;
+
+  // Tool calls the agent wants to make. Each goes through the
+  // destructive-action gate (plan §destructive-action lockdown) if
+  // it's destructive.
+  repeated ToolCall tool_calls = 2;
+
+  // Cost incurred by this agent run, in integer cents. Reconciled
+  // against Stripe per STAGE_0_PLAN.md §Week 3 deliverable 6.
+  int64 cost_cents = 3;
+}
+
+// ToolCall names a tool + its JSON-encoded arguments.
+message ToolCall {
+  string tool = 1;
+  string args_json = 2;
+  // Whether this call is destructive per the locked definition in
+  // CLAUDE.md. If true, the gateway routes through a Temporal
+  // signal channel for human approval.
+  bool destructive = 3;
+}
+
+// TaskResult is the final outcome the gateway returns to the caller.
+message TaskResult {
+  string status = 1; // "shipped", "rejected", "halted_for_approval"
+  AgentOutput output = 2;
+  // Error detail if status != "shipped".
+  string error = 3;
+}

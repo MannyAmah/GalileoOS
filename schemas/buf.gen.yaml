@@ -1,0 +1,5 @@
+version: v2
+plugins:
+  # Codegen wired in PR #4 (CI expansion) when generated Go + Python stubs
+  # are first consumed. Stage 0 PR #3 only lints the schemas.
+  []

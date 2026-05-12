@@ -1,0 +1,57 @@
+// Company Brain query contract — request/response between any agent
+// and the galileo-brain-mcp server (plan §4.6 / §4.4). Stage 0 stubs
+// the API; real implementation lands in Stage 1.
+
+syntax = "proto3";
+
+package galileo.v1;
+
+import "galileo/v1/tenant.proto";
+
+option go_package = "github.com/MannyAmah/GalileoOS/kernel/gen/galileo/v1;galileov1";
+
+// BrainQuery is a semantic + optional graph + optional time-window
+// query against the tenant's Brain.
+message BrainQuery {
+  TenantContext tenant = 1;
+
+  // Natural-language query; embedded by the gateway via LiteLLM.
+  string query = 2;
+
+  // Max number of document chunks to return.
+  int32 top_k = 3;
+
+  // Optional: restrict to a department slug ("marketing", "sales", …).
+  string department = 4;
+
+  // Optional: hard token budget for this query at the brain-mcp level.
+  // Prevents long-context-window blowups (risk register row in plan §8).
+  int32 max_tokens = 5;
+}
+
+// BrainResponse carries the retrieved chunks with provenance.
+message BrainResponse {
+  repeated DocumentRef chunks = 1;
+
+  // Cost incurred by this query, in integer cents (embedding +
+  // optional re-rank). Attributed to the tenant.
+  int64 cost_cents = 2;
+}
+
+// DocumentRef is one citable chunk of the Brain.
+message DocumentRef {
+  // Stable identifier within the tenant's Brain.
+  string id = 1;
+
+  // The text content of the chunk.
+  string text = 2;
+
+  // Origin: which source produced this chunk (gdrive / slack / github / ...).
+  string source = 3;
+
+  // Original URI inside the source — restored from the manifest.
+  string source_uri = 4;
+
+  // Cosine similarity vs. the query, in [0,1].
+  float score = 5;
+}

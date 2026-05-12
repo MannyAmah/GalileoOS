@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: kernel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: kernel/go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+
+  python:
+    name: python
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: agents
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install ruff + mypy
+        run: pip install "ruff==0.6.*" "mypy==1.11.*"
+      - name: ruff
+        run: ruff check .
+      - name: mypy
+        run: mypy --strict onboarding hello
+
+  web:
+    name: web
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: install
+        run: npm install --no-audit --no-fund
+      - name: type-check
+        run: npx tsc --noEmit
+
+  protobuf:
+    name: protobuf
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: schemas
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.45.0"
+      - name: buf lint
+        run: buf lint

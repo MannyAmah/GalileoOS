@@ -137,7 +137,7 @@ When a CI pin moves (security update, ecosystem bump), the matching devcontainer
 
 | Tool | CI source | Devcontainer source | Current pin |
 | --- | --- | --- | --- |
-| Go | `actions/setup-go@v5 go-version` | devcontainer features | `1.23` |
+| Go | `actions/setup-go@v5 go-version` | devcontainer features | `1.26` |
 | Python | `actions/setup-python@v5 python-version` | devcontainer features | `3.12` |
 | Node | `actions/setup-node@v4 node-version` | devcontainer features | `22` |
 | Rust | n/a (no Rust code in repo yet) | devcontainer features | `latest` until Stage 2 lands Rust code; pin matches CI in same PR thereafter |
@@ -146,10 +146,16 @@ When a CI pin moves (security update, ecosystem bump), the matching devcontainer
 | mypy | `pip install 'mypy==…'` | post-create.sh `PIN_MYPY` | `1.11.*` |
 | black | `pip install 'black==…'` | post-create.sh `PIN_BLACK` | `26.*` |
 | pip-audit | `pip install 'pip-audit==…'` | post-create.sh `PIN_PIP_AUDIT` | `2.7.*` |
-| golangci-lint | `golangci/golangci-lint-action@v6 version` | post-create.sh `PIN_GOLANGCI_LINT` | `v1.62.0` |
+| golangci-lint | `golangci/golangci-lint-action@v7 version` | post-create.sh `PIN_GOLANGCI_LINT` | `v2.12.2` |
 | govulncheck | `go install …@VERSION` in CI step | post-create.sh `PIN_GOVULNCHECK` | `v1.1.4` |
 
 The Rust pin policy is explicit: "latest" while no Rust code exists in the repo (no CI to align to). The Stage 2 PR that introduces Tauri adds both the CI Rust pin and the matching devcontainer pin in the same commit.
+
+### Latest-1 language posture
+
+Go runtime tracks current stable major (the value in the pin table above). `kernel/go.mod`'s `go` directive tracks one major behind current ("latest-1"). This decouples runtime security patching from language-feature adoption: runtime gets stdlib CVE fixes at upstream cadence; the language baseline moves deliberately when ecosystem tooling (notably golangci-lint, whose "latest-1" build policy means its binary is one Go major behind current) catches up.
+
+Concrete state as of this writing: runtime `1.26`, `kernel/go.mod` directive `go 1.25.0`, golangci-lint `v2.12.2` (built with Go 1.25.0). When Go 1.27 ships, runtime bumps to 1.27, `go.mod` to 1.26, golangci-lint to whatever v2.x catches up — preserving the same one-major lag. See PR #11 for the precedent that committed the project to this posture.
 
 ## Escalation
 
@@ -189,4 +195,4 @@ Long-running facts about this project (repo namespace, locked decisions, v7 rule
 
 ---
 
-*This file is part of the Galileo OS operating contract. Last updated: 2026-05-12. Any change to this file is a PR and requires reviewer approval.*
+*This file is part of the Galileo OS operating contract. Last updated: 2026-05-13. Any change to this file is a PR and requires reviewer approval.*

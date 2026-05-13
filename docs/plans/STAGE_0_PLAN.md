@@ -34,6 +34,8 @@ Branch protection is **not** deferred — it is configured atomically with the b
 
 ## 1.5 Pre-commit procedure (redline 5: atomic branch protection)
 
+> **Live-state cross-reference.** The `required_approving_review_count` parameter in the JSON below is the value at protection-enable time. The live value was lowered from `1` to `0` on 2026-05-12 to break the single-account self-approval deadlock; see [`docs/decisions/0002-protection-approval-relaxation.md`](../decisions/0002-protection-approval-relaxation.md) for the rationale, consequences, and four reversal triggers. All other rules in this §1.5 JSON remain enforced live exactly as written.
+
 The bootstrap commit lands on a branch that is **already protected** before any commit is pushed to it. There is no window where `main` is unprotected. Procedure is reproducible — anyone with admin on `MannyAmah/GalileoOS` can re-run it.
 
 **Step 1 — Configure branch protection on `main` BEFORE any push.** The repo already exists with `main` as default branch (only `LICENSE` on it), so we apply protection to the existing `main` rather than creating it fresh:
@@ -146,11 +148,12 @@ Specific pre-registered failures Stage 0 must be prepared for:
 
 **Goal:** `make up` brings up the stack against empty service skeletons; CI green on a no-op PR; branch protection on; CLAUDE.md/AGENTS.md committed; ADR for the repo namespace deviation committed.
 
-**Deliverables** (each shipped as its own PR; maker/checker on every merge):
+**Deliverables** (each shipped as its own PR; maker/checker on every merge). GitHub-PR numbers shown in parens where they differ from plan-PR labels (see [`docs/decisions/0002-protection-approval-relaxation.md`](../decisions/0002-protection-approval-relaxation.md) for the protection-relaxation context that produced the offset):
 
-1. **PR #1 — Bootstrap.** Initial commit: LICENSE (retained from current `main`), `docs/galileo_os_infrastructure_plan.md`, `docs/plans/STAGE_0_PLAN.md` (this file), `.gitignore`. Pushed via the §1.5 pre-commit procedure to **already-protected** `main` — no force-push, no direct commit to `main`. The PR is the only path. Branch protection is enabled before this PR is opened, not after it lands.
-2. **PR #2 — Operating discipline.** `CLAUDE.md` and `AGENTS.md` at repo root, codifying the v7 nine rules, the destructive-action definition, the read-only-by-default rule, the language boundaries from plan §5, and the link to this Stage 0 plan. Plus `docs/decisions/0001-repo-namespace.md` recording the `MannyAmah/GalileoOS` deviation and rationale.
-3. **PR #3 — Monorepo layout (empty skeletons).** Per plan §5.2, but adapted to the kickoff's directory names:
+1. **plan-PR #1 (GitHub #1) — Bootstrap.** Initial commit: LICENSE (retained from current `main`), `docs/galileo_os_infrastructure_plan.md`, `docs/plans/STAGE_0_PLAN.md` (this file), `.gitignore`. Pushed via the §1.5 pre-commit procedure to **already-protected** `main` — no force-push, no direct commit to `main`. The PR is the only path. Branch protection is enabled before this PR is opened, not after it lands. **MERGED 2026-05-12.**
+2. **plan-PR #2 (GitHub #3) — Operating discipline.** `CLAUDE.md` and `AGENTS.md` at repo root, codifying the v7 nine rules, the destructive-action definition, the read-only-by-default rule, the language boundaries from plan §5, and the link to this Stage 0 plan. Plus `docs/decisions/0001-repo-namespace.md` recording the `MannyAmah/GalileoOS` deviation and rationale. **MERGED 2026-05-12.** (GitHub #2 was auto-closed when the bootstrap branch was deleted at PR #1 merge; re-opened as GitHub #3 with byte-identical content.)
+2a. **ADR-0002 micro-PR (GitHub #4) — Protection-approval relaxation.** Not originally in the plan; opened to document the protection-policy ADR after lowering `required_approving_review_count` from 1 to 0 to break the single-account self-approval deadlock. **MERGED 2026-05-12.** See [`docs/decisions/0002-protection-approval-relaxation.md`](../decisions/0002-protection-approval-relaxation.md).
+3. **plan-PR #3 (GitHub #5) — Monorepo skeletons + protobuf v1 + minimal CI.** Originally scoped as skeletons-only (with CI deferred to plan-PR #4), but the reviewer required CI green on the empty skeletons before merge, so the minimal CI lane moved forward into this PR. **MERGED 2026-05-12.** Per plan §5.2, adapted to the kickoff's directory names:
    ```
    kernel/                Go — Temporal workers, agent-runner, gateway (skeleton main.go each)
      gateway/
@@ -174,20 +177,17 @@ Specific pre-registered failures Stage 0 must be prepared for:
    Makefile               make up / test / lint / probe targets
    ```
    The kickoff says `agents/` and `web/`; plan §5.2 says `apps/` and `services/`. **Adopting kickoff names** since the kickoff is the more recent authoritative source for the repo layout.
-4. **PR #4 — CI pipeline.** GitHub Actions workflow:
-   - `lint`: golangci-lint (Go), ruff + black (Python), eslint + prettier (TS), rustfmt + clippy (Rust)
-   - `type-check`: `go vet ./...`, `mypy agents/`, `tsc --noEmit`, `cargo check`
-   - `test`: `go test ./...`, `pytest agents/`, `vitest run` (web). All allowed to be no-op in Stage 0; the workflow is the deliverable, not the test count.
-   - `dep-scan`: `govulncheck` (Go), `pip-audit` (Python), `npm audit --omit=dev` (Node), `cargo audit` (Rust).
-   - `build-matrix`: builds each service skeleton to confirm compilation.
-   - Status checks set as required for `main`.
-5. **PR #5 — Devcontainer + Makefile.** `.devcontainer/devcontainer.json` pinning Go 1.23, Python 3.12+, Node 22, Rust stable. `Makefile` with:
-   - `make up` — `docker compose -f deploy/compose/docker-compose.yml up -d` (compose file from Appendix B; references our own service images which are placeholders until Week 3)
-   - `make test` — runs all language test commands
-   - `make lint` — runs all linters
-   - `make probe` — placeholder target, fleshed out Week 2
+4. **plan-PR #4 (GitHub #6, next) — CI expansion + status-check enforcement + devcontainer + Makefile.** Combines what the original plan called PR #4 (CI) and PR #5 (devcontainer + Makefile), minus the minimal CI that already shipped in plan-PR #3. Scope:
+   - **CI expansion** on top of the minimal `go / python / web / protobuf` jobs:
+     - `lint` (deeper than the current `vet`/`ruff`): golangci-lint (Go), ruff + black-check (Python), eslint + prettier (TS), rustfmt + clippy (Rust placeholder).
+     - `dep-scan`: `govulncheck` (Go), `pip-audit` (Python), `npm audit --omit=dev` (Node).
+     - Test wiring: keep `go test ./...` from plan-PR #3; add `pytest agents/` and `vitest run` (web). All allowed to be no-op; the workflow is the deliverable, not the test count.
+     - `buf breaking` guard removal from `protobuf` job (carry-over from plan-PR #3 per the [carryover-commitments](../decisions/0002-protection-approval-relaxation.md) discipline — explicit checkbox in plan-PR #4's PR description before opening for review).
+   - **Status-check enforcement on `main`** (already wired for the four PR #5 contexts; this step extends `required_status_checks` to add the new contexts above).
+   - **`.devcontainer/devcontainer.json`** pinning Go 1.23, Python 3.12+, Node 22, Rust stable. Single multi-language image (mitigation noted below).
+   - **`Makefile`** with `make up` (compose from Appendix B, placeholder service images until Week 3), `make test`, `make lint`, `make probe` (Week 2 placeholder).
 
-**Week 1 exit criterion:** `make up` succeeds on a fresh Ubuntu 24.04 VM and brings up the Appendix B services (Postgres, Temporal, NATS, LiteLLM, Opik, Ollama). Galileo services are placeholder images (e.g., `nginx:alpine` standins) but the compose graph is intact. CI green on PR #5. Branch protection enabled. No PRs merged without review.
+**Week 1 exit criterion:** `make up` succeeds on a fresh Ubuntu 24.04 VM and brings up the Appendix B services (Postgres, Temporal, NATS, LiteLLM, Opik, Ollama). Galileo services are placeholder images (e.g., `nginx:alpine` standins) but the compose graph is intact. CI green on plan-PR #4 / GitHub #6. Branch protection enabled with the expanded required-status-check list. No PRs merged without review.
 
 **Week 1 risks:**
 - Devcontainer image sprawl across four languages may exceed Codespaces / local Docker budgets. Mitigation: use a single multi-language image rather than nested `.devcontainer/`s.

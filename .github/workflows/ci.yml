@@ -81,13 +81,18 @@ jobs:
       - name: buf breaking
         # The check is conditional only for the *introducing* PR (when
         # schemas/galileo/v1/ does not yet exist on main and there is
-        # nothing to compare against). After PR #5 merges, the guard
-        # falls through and breaking runs against main on every PR.
-        # Removing the guard is part of PR #6's exit checklist.
+        # nothing to compare against). After PR #5 merges the guard
+        # falls through; breaking runs against origin/main on every PR.
+        # Guard removal is the first checkbox precondition of plan-PR #4.
+        #
+        # Uses ref=refs/remotes/origin/main rather than branch=main
+        # because actions/checkout only populates the remote-tracking
+        # ref, not a local main branch; buf's branch= form resolves
+        # against refs/heads/, which we don't have on PR runners.
         run: |
           if git -C .. show "origin/main:schemas/galileo/v1/tenant.proto" >/dev/null 2>&1; then
             echo "main has schemas — running buf breaking against origin/main"
-            buf breaking --against '../.git#branch=main,subdir=schemas'
+            buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=schemas'
           else
             echo "main has no schemas/ yet (this is the introducing PR)"
             echo "buf breaking will activate on the next PR after this one merges"

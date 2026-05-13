@@ -5,7 +5,7 @@
 | **Stage** | Stage 0 — Foundations |
 | **Window** | Weeks 1–4 (kickoff: 2026-05-12) |
 | **Audience** | Internal only. No paying customers. |
-| **Headline deliverable** | "Hello Agent" running durably with traces and budget, Mirage probe complete, Stage 0 gate passed. |
+| **Headline deliverable** | "Hello Agent" running durably with traces and budget, Mirage layer-relocation closeout committed (Reading 2 — Layer 5 agent-side; see PR #13 and ADR-0003), Stage 0 gate passed. |
 | **Authoritative spec** | [`docs/galileo_os_infrastructure_plan.md`](../galileo_os_infrastructure_plan.md) §6 Stage 0 + Appendix B + §3.5 + §2.4 |
 | **Author** | Claude Opus 4.7 (1M ctx), under Emmanuel's direction, 2026-05-12 |
 | **Status** | DRAFT — awaiting sign-off before Week 1 begins |
@@ -136,7 +136,7 @@ Specific pre-registered failures Stage 0 must be prepared for:
 
 | Failure | Detection | Closeout | Downstream consequence |
 | --- | --- | --- | --- |
-| Mirage probe fails any of 3 tests | Week 2 probe run | `PROBE_MIRAGE_STAGE0.md` with structural finding | L3 and L5 fall back to discrete MCP connectors; `agents/onboarding/` is built against discrete connectors not Mirage; Mirage re-evaluation queued for Stage 2 at v0.1.x |
+| Mirage layer-relocation discipline (no live probe required) | Week 2 closeout round | `CLOSEOUT_LAYER3_MIRAGE_RECONSIDERED.md` + canonical plan edits + `0003-mirage-layer-relocation.md` | First plan-deviation in the project. Mirage placed at Layer 5 (agent-side library) per Reading 2; the Layer 3 placement was a docs-discoverable mismatch, not a probe outcome. PR #10's apparatus is retained as a general kernel-side connector harness (rename in follow-up PR). |
 | Temporal operational complexity exceeds capacity | Week 3 kernel boot | `CLOSEOUT_TEMPORAL_OPS_S0.md` | Stage 0 ships with `temporal server start-dev` only; Stage 2 promotion to Helm gets a dedicated spike before adoption |
 | LiteLLM hop adds >50ms p95 latency | Week 3 benchmark | `CLOSEOUT_LITELLM_LATENCY_S0.md` | Deploy LiteLLM as sidecar to `galileo-agent-runner` instead of separate service |
 | Cost meter disagrees with Stripe event count | Week 4 gate test | `CLOSEOUT_COST_METER_S0.md` | Stage 0 gate fails. Stage 1 does not begin. Root cause traced before retry. |
@@ -193,75 +193,28 @@ Specific pre-registered failures Stage 0 must be prepared for:
 - Devcontainer image sprawl across four languages may exceed Codespaces / local Docker budgets. Mitigation: use a single multi-language image rather than nested `.devcontainer/`s.
 - Temporal-Postgres connection wiring in Appendix B is the most fragile piece. Mitigation: probe it as soon as Postgres + Temporal are up; if the official `auto-setup` image breaks, fall back to running `temporal server start-dev` standalone for Stage 0 (mitigation already named in plan).
 
-### Week 2 — Mirage probe (2026-05-19 to 2026-05-26)
+### Week 2 — Mirage layer-relocation closeout (2026-05-19 to 2026-05-26)
 
-**The most important week of Stage 0.** Decides whether the entire agent data plane downstream of Layer 3 is built on Mirage or on N discrete MCP connectors.
+**Revised scope.** The original Week 2 plan called for a live Mirage probe gating adoption at Layer 3. During PR #13's inline planning round (2026-05-13), reading Mirage's deployment-model documentation directly surfaced a structural mismatch: Mirage ships Python and TypeScript SDKs only, with no Go SDK or native server. Placing Mirage at Layer 3 (Galileo's Go kernel) would have required a permanent Python sidecar not named in the original plan. **The live probe is no longer the right experiment** — the placement decision is structural, not measurement-driven. Week 2 instead delivers the **first plan-deviation in the project's history**, following the four-part deviation template (closeout + canonical-plan edits + ADR + follow-up code change).
 
-**Setup (Mon):**
-- Vendor a pinned commit of `strukto-ai/mirage` into `mcp-servers/mirage-vendored/`. Pin recorded in a `VENDOR.md` at that path. **Do not track `main`; v0.0.x will break.**
-- Stand up three test OAuth apps: an AWS test account for S3, a workspace Google account for GDrive, a Slack test workspace. Tokens stored in a `.env.probe` (gitignored).
+**Deliverables (Mon–Fri):**
 
-**Probe tests (Tue–Thu) — all three must pass. Pass criteria reproduce the kickoff numbers verbatim; no paraphrase, no rounding:**
+1. `docs/closeouts/CLOSEOUT_LAYER3_MIRAGE_RECONSIDERED.md` — structural finding, three readings considered, choice (Reading 2 — Layer 5 agent-side), maker-checker provenance, downstream consequences, reversal triggers, v7-rule-3 framing, template-for-future-deviations.
+2. Edits to `docs/galileo_os_infrastructure_plan.md` reflecting Mirage at Layer 5: §4.4 (Layer 3 substrate) Mirage row removed; §4.6 (Layer 5 integrations) Mirage reframed as agent-side library; §3.3 step 4 (Mount) reworded to clarify mounting is agent-side; destructive-action defense #3 reworded — kernel enforces *existence* of pre-write snapshot artifact, agents *produce* it.
+3. `docs/decisions/0003-mirage-layer-relocation.md` — ADR with metadata, supersession info, named reversal triggers (Mirage publishes Go SDK / native server mode / Galileo kernel acquires need to crawl heterogeneous backends itself).
+4. Edits to this file (`STAGE_0_PLAN.md`) reflecting the same: Week 2 scope revised, redline-4 row updated, Week 4 Onboarding Crew "if Mirage probe passed/failed" branching collapsed into per-agent choice.
 
-| # | Test | Pass criterion (verbatim) | Measurement methodology |
-| --- | --- | --- | --- |
-| 1 | **Multi-tenant OAuth.** Mount S3 + Google Drive + Slack with three distinct OAuth contexts in the same Mirage process. Tenants A, B, C each have their own bucket / drive / workspace. | **Zero cross-tenant reads across 10,000 randomized requests.** Token refresh works for each backend independently. | **Request generator:** a Go test harness (`kernel/probe/mirage/oauth_test.go`) builds a fixed pool of 10,000 read requests, each tagged with a target tenant ∈ {A,B,C} and a target path; the pool is shuffled with `math/rand/v2` seeded from `crypto/rand`, then replayed against the live Mirage process bound to the three OAuth contexts in parallel. Every response payload is asserted to belong to the requesting tenant by a per-tenant marker file written before the probe; any cross-tenant leak fails the test. **Token refresh:** mock 401 injected per backend; asserts the matching refresh token (not another tenant's) is exchanged. |
-| 2 | **Two-layer cache concurrency.** 50 concurrent agent simulators reading and writing the same Mirage workspace. | **p99 read latency under 100ms with warm cache. Zero corruption. Zero stale reads beyond TTL.** | **Concurrency driver:** Go test harness (`kernel/probe/mirage/cache_test.go`) spawning 50 goroutines doing mixed read/write against overlapping paths for a fixed wall-clock duration. **Latency histogram:** per-request durations recorded into a `prometheus.HistogramVec` with buckets at 1/5/10/25/50/75/100/250/500ms; **p99 read latency** computed via `histogram_quantile(0.99, ...)` over warm-cache reads only (cold-start reads excluded by a startup-skip window). A p99 of 100ms or higher fails the test; an average or median does not substitute. **Corruption:** per-file SHA-256 ledger maintained by writers and verified by readers; any mismatch fails. **Staleness:** TTL probe records `(write_ts, read_ts)` pairs and flags any read older than the declared TTL; any flagged read fails. |
-| 3 | **Snapshot / rollback round-trip.** Snapshot a 100MB workspace, mutate it, restore. | **Snapshot under 10 seconds, restore under 10 seconds, byte-identical state after restore.** | **Hash comparison:** pre-snapshot the workspace tree is walked and a single top-level SHA-256 is computed over the sorted, newline-delimited concatenation of `<relative_path>\t<sha256(file_contents)>` lines (per-file `shasum -a 256`, then `LC_ALL=C sort`, then `shasum -a 256` over the manifest stream). After mutate-then-restore, the same procedure runs; the two top-level SHA-256s must match exactly — byte-identical means the manifest hashes are equal, not "approximately" equal. **Wall-clock:** snapshot and restore durations captured via `time.Now()` deltas in the Go driver (`kernel/probe/mirage/snapshot_test.go`); either operation reaching 10.000 seconds or more fails the test. |
+PR #10's apparatus is **retained as a general kernel-side connector verification harness** rather than a Mirage-specific probe. A follow-up PR renames `kernel/probe/mirage/` to reflect this generalized role (name decided with code context, not pre-committed in the plan).
 
-**Calibration (Fri morning):** Before declaring pass/fail, the test thresholds above are re-confirmed against the spec. No retroactive softening. If the probe is close-but-fails any test (e.g., p99 read at 105ms), it **fails**.
+**Calibration (Fri morning):** Before declaring Week 2 done, re-confirm that all four artifacts (closeout + canonical plan edits + ADR + STAGE_0_PLAN.md edits) are committed and internally consistent (each names the other; no stale "probe" references survive in any of them).
 
-**Deliverable (Fri):** `docs/closeouts/PROBE_MIRAGE_STAGE0.md` committed regardless of outcome. Format:
-
-```markdown
-# PROBE_MIRAGE_STAGE0 — <PASS | FAIL>
-
-| Field | Value |
-| --- | --- |
-| Mirage commit | <sha> |
-| Probe date | YYYY-MM-DD |
-| Outcome | PASS / FAIL |
-| Decision | Adopt Mirage / Fall back to discrete MCP connectors |
-
-## Test 1 — Multi-tenant OAuth: <PASS | FAIL>
-- Measured: <0 cross-tenant reads in N requests>
-- Notes: <…>
-
-## Test 2 — Cache concurrency: <PASS | FAIL>
-- Measured: p99 = <X>ms, corruption = <N>, stale reads = <N>
-- Notes: <…>
-
-## Test 3 — Snapshot/rollback: <PASS | FAIL>
-- Measured: snapshot = <X>s, restore = <Y>s, byte-identical = <yes/no>
-- Notes: <…>
-
-## Structural finding
-<One paragraph naming what we learned. If pass: which Mirage assumption from the plan held up. If fail: which assumption broke and why discrete MCPs are now the right substrate.>
-
-## Downstream consequences
-- Layer 3 substrate: <Mirage VFS | discrete MCP connectors>
-- Onboarding Crew design: <Mirage mount tree per §3.3 step 4 | per-connector enumeration>
-- Stage 2 re-evaluation: <none | re-probe Mirage at v0.1.x>
-```
-
-PR title: `probe(stage0): mirage — <pass|fail> with <key finding>`.
-
-**Week 2 exit criterion:** `PROBE_MIRAGE_STAGE0.md` committed to `main`. If pass, Week 3 reuses Mirage as a service in the compose stack. If fail, Week 3 reuses discrete MCP connectors and the Onboarding Crew design adjusts.
+**Week 2 exit criterion:** `CLOSEOUT_LAYER3_MIRAGE_RECONSIDERED.md` + canonical plan edits + ADR-0003 + this file's edits all committed to `main` (single PR #13). Week 3 proceeds with the Onboarding Crew scaffolding under Reading 2: agents may import `mirage-ai` in-process or use discrete connector clients; the choice is per-agent.
 
 **Week 2 risks:**
-- Mirage v0.0.x API surface may change between vendor and probe. Mitigation: pin and never `git pull`.
-- Real OAuth setup time for three providers may eat a day. Mitigation: start OAuth provisioning Monday morning.
-- Test harness in Go may take longer to write than the probe itself. Mitigation: write the harness during Week 1 evenings if Week 1 wraps early.
+- Reading 2 implementation surface lands in agent code (Python). Risk surfaces during Week 4 when Onboarding Crew stubs are scaffolded, not during Week 2 itself.
+- Reversal-trigger drift: if Mirage publishes a Go SDK during Stage 1+, ADR-0003's triggers fire and the placement decision is revisited. Until then, kernel does not import Mirage.
 
-**Week 2 cross-cutting deliverable — cold-engineer identification (deadline: end of Friday of Week 2):**
-
-The Stage 0 gate (Week 4) requires a senior engineer who has never seen Galileo to complete the install walkthrough end-to-end. Sourcing this person must complete by **end of Week 2 (Fri 2026-05-22 EOD)**, not Week 4. "Identification" means all three of:
-
-1. **Name** — a specific human, recorded in `docs/closeouts/STAGE_0_GATE.md` (created in Week 2 with this field pre-populated).
-2. **Written commitment** — email or signed message confirming they will participate in the Week 4 walkthrough, including the 2026-06-02 → 2026-06-09 availability window.
-3. **Confirmed cold-state** — explicit confirmation they have not read `docs/galileo_os_infrastructure_plan.md`, `docs/plans/STAGE_0_PLAN.md`, or any other Galileo material prior to Week 4. An NDA may be signed before the walkthrough; reading the materials before walkthrough day disqualifies them.
-
-If no engineer satisfying all three criteria is identified by end of Friday of Week 2, **that itself is a gate risk** and is flagged in the Week 2 closeout (`PROBE_MIRAGE_STAGE0.md` "Adjacent risks" section). Stage 1 sequencing waits until a cold engineer is committed. This is not a silent slip.
+**Cold-engineer identification:** Engineer identified 2026-05-13 (per `CLAUDE.md` §Stage 0 process notes). Walkthrough scheduling happens in Week 4 when the Onboarding Crew scaffolding lands and the install walkthrough is ready to run end-to-end.
 
 ### Week 3 — Kernel boot (2026-05-26 to 2026-06-02)
 
@@ -301,23 +254,23 @@ If no engineer satisfying all three criteria is identified by end of Friday of W
 
 **Deliverables:**
 
-1. **`agents/onboarding/connector.py`.** Python LangGraph agent that authenticates each source. If Mirage probe passed: each auth produces a Mirage mount. If failed: each auth instantiates a per-source MCP client from the fallback set named below. **No ingestion** — Stage 1's job.
+1. **`agents/onboarding/connector.py`.** Python LangGraph agent that authenticates each source and writes the per-source credentials into the tenant's Infisical bucket. Downstream agents (Crawler, Ingestion) may import `mirage-ai` and mount each authenticated source in-process, or instantiate per-source MCP clients from the discrete fallback set named below. Per-agent choice. **No ingestion** in Stage 0 — Stage 1's job.
 2. **`agents/onboarding/crawler.py`.** Walks every connected source and emits a manifest (list of paths, sizes, hashes, content types) into a `tenant_manifests` Postgres table. Caps per plan §3.3 step 5 (50K docs / 6h wall clock / $50 LLM spend) enforced as hard limits.
 3. **Manifest validator.** A simple Go binary in `kernel/manifest-check/` that reads the manifest, computes expected vs. actual counts per source, and fails CI if a regression is detected on the test workspace.
 4. **30-minute install walkthrough video.** Recorded by Emmanuel (or by a designated maker, with the QA agent doing the run). Hosted on the eventual `galileoos.com` or, in Stage 0, on YouTube as Unlisted with a link checked into `docs/onboarding/install_walkthrough.md`.
 5. **Stage 0 gate test.** Three internal teammates (Emmanuel + two volunteers) each spin up a fresh instance, run through the install walkthrough, register a tenant, set $5 budget, run Hello Agent 100×. Their results are committed to `docs/closeouts/STAGE_0_GATE.md` with names, dates, and any deviations.
 
-**If Mirage probe failed (redline 4):** the Onboarding Crew scaffolding in Week 4 still lands, but on discrete MCP servers instead of Mirage. The three fallback MCP servers for the internal test workspace are **locked at sign-off of this plan**, not deferred to Week 4:
+**Under Reading 2 (Mirage at Layer 5, agent-side):** the Onboarding Crew scaffolding in Week 4 lands with Python agents that may import `mirage-ai` in-process or call discrete MCP servers directly — the choice is per-agent. The three discrete MCP servers for the internal test workspace are **locked at sign-off of this plan**, available to both Mirage-using and Mirage-bypassing agents:
 
 - **GitHub:** `@modelcontextprotocol/server-github` — Anthropic's reference MCP server in the curated `punkpeye/awesome-mcp-servers` catalog (plan §4.6 / Dev/Ops row). MIT-licensed, Node.js, deployed as a sandboxed subprocess by `agents/onboarding/connector.py`. Read-only PAT scopes only (`contents:read`, `metadata:read`).
 - **Slack:** `@modelcontextprotocol/server-slack` — Anthropic's reference MCP server in the curated catalog (plan §4.6 / Communication row). MIT-licensed, Node.js. Read-only OAuth bot scopes only (`channels:history`, `channels:read`, `files:read`, `users:read`).
 - **Google Drive:** `@modelcontextprotocol/server-gdrive` — Anthropic's reference MCP server in the curated catalog (plan §4.6 / Files/Docs row). MIT-licensed, Node.js. Read-only OAuth scope (`drive.readonly`).
 
-All three live under the official `modelcontextprotocol/servers` repository, vendored at a pinned commit at `mcp-servers/fallback/` if needed. No write scopes — per the locked decision in `docs/galileo_os_infrastructure_plan.md` §kickoff / read-only-by-default. The choice is locked now; Week 4 does **not** stall on "which connectors do we use?"
+All three live under the official `modelcontextprotocol/servers` repository, vendored at a pinned commit at `mcp-servers/fallback/` if needed. No write scopes — per the locked decision in `docs/galileo_os_infrastructure_plan.md` §kickoff / read-only-by-default.
 
 **Week 4 exit criterion (== Stage 0 gate):**
 1. ✅ `make up` works on a fresh Ubuntu 24.04 VM (verified by the three teammates).
-2. ✅ `PROBE_MIRAGE_STAGE0.md` committed (from Week 2).
+2. ✅ `CLOSEOUT_LAYER3_MIRAGE_RECONSIDERED.md` + canonical plan edits + ADR-0003 committed (from Week 2).
 3. ✅ Hello Agent demo: 100 runs, 100 Opik traces, cost = Stripe to the cent (verified by all three teammates).
 4. ✅ Onboarding Crew stubs produce a valid manifest against the test workspace.
 5. ✅ Walkthrough video exists; one of the three teammates ran the install end-to-end without help.
@@ -326,7 +279,7 @@ If any item fails, `docs/closeouts/CLOSEOUT_STAGE0.md` is written naming the str
 
 **Week 4 risks:**
 - "Senior engineer who has never seen Galileo completes the install" is hard to source from a 3-person internal team. Mitigation: pre-register one outside engineer (paid hourly) as the cold tester; they sign an NDA, do the install, write a short note for the closeout.
-- Manifest schema collisions between Mirage-mode and discrete-MCP-mode. Mitigation: schema designed to be union of both modes; `source_kind` field discriminates.
+- Manifest schema collisions between Mirage-using agents and Mirage-bypassing agents. Mitigation: schema designed to be union of both modes; `source_kind` field discriminates.
 
 ## 5. Maker / checker assignments (v7 rule 5)
 
@@ -336,7 +289,7 @@ Stage 0 is small — likely just Emmanuel plus Claude sessions. The discipline s
 - **Checker** is **never** the same agent in the same session. For Stage 0:
   - PRs go up; Emmanuel reviews and approves before merge.
   - For UI/Hello-Agent flow, `/qa` is run against the staging URL by a separate Claude session (or by Emmanuel manually) and the screenshot evidence committed.
-  - The Mirage probe results in Week 2 are reviewed by Emmanuel before the closeout doc is merged.
+  - The Week 2 Mirage layer-relocation closeout, canonical plan edits, and ADR-0003 are reviewed by Emmanuel before the PR is merged. The maker-checker iteration runs artifact-by-artifact (closeout, then plan edits, then ADR) rather than reviewing all three at once.
 
 No exceptions. Even a typo fix in a Stage 0 doc is a PR.
 
@@ -348,7 +301,7 @@ Every non-trivial finding during Stage 0 is captured in `docs/solutions/<topic>.
 - Temporal-Postgres wiring gotchas → `docs/solutions/temporal-postgres-wiring.md`
 - LiteLLM tenant context propagation → `docs/solutions/litellm-tenant-context.md`
 - Cost meter ↔ Stripe reconciliation → `docs/solutions/cost-meter-stripe-recon.md`
-- Mirage probe lessons (regardless of outcome) → integrated into `PROBE_MIRAGE_STAGE0.md`
+- Mirage layer-relocation lessons → integrated into `CLOSEOUT_LAYER3_MIRAGE_RECONSIDERED.md` + the "read the dependency's deployment-model documentation before encoding it in the plan" discipline pattern compounds for future vendor evaluations.
 
 Future sessions read `docs/solutions/` before starting work. The cost is 10 minutes per finding; the value compounds for years.
 
@@ -369,7 +322,7 @@ When all five exist and items 1–4 pass, the **Stage 1 plan PR** opens. Until t
 Per kickoff: if anything in `docs/galileo_os_infrastructure_plan.md` turns out to be wrong, do **not** silently work around it. Open an issue tagged `plan-deviation`, name the structural finding, propose the revised approach, wait for Emmanuel's sign-off. Plan deviations are normal; silent workarounds are not.
 
 Examples that would trigger a `plan-deviation` issue:
-- Mirage probe fails in a way that changes the §3.3 onboarding flow (different from "fall back to MCPs"; e.g., a primitive in the plan turns out not to be feasible at all).
+- A vendor-evaluation read surfaces a structural mismatch with the plan's role for that vendor (e.g., the Mirage layer-relocation deviation in PR #13 — closeout + canonical-plan edits + ADR + follow-up code change; first deviation in the project's history, sets the four-part template for future ones).
 - Appendix B docker-compose images turn out to be unavailable or incompatible with Ubuntu 24.04.
 - LiteLLM's tenant-context model can't actually attribute cost to tenants — would change §2.3's claim that "no homegrown meter" is needed.
 

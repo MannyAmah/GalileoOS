@@ -42,7 +42,5 @@ up:  ## Stage 0 placeholder — Appendix B docker-compose stack lands in Week 3.
 	@echo "Stage 0 Week 3 lands the docker-compose stack from docs/galileo_os_infrastructure_plan.md Appendix B."
 
 .PHONY: probe
-probe:  ## Stage 0 placeholder — Mirage probe harness lands in plan-PR #10.
-	@echo "make probe: not yet wired."
-	@echo "The Mirage probe harness lands in plan-PR #10 (immediately after plan-PR #9 merges)."
-	@echo "Week 2 uses this target to run the three probe tests."
+probe:  ## Run the Mirage probe apparatus tests (synthetic mocks; no Mirage import).
+	@cd kernel && go test -count=1 -v ./probe/mirage/...

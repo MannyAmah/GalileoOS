@@ -100,6 +100,57 @@ Each directory's first README describes its conventions. If a convention isn't d
 - If you learned something non-obvious, write it to `docs/solutions/<topic>.md` (rule 7).
 - Update [`docs/plans/STAGE_<N>_PLAN.md`](./docs/plans/) if the execution sequence changed (don't change the success contract without a `plan-deviation`).
 
+## Plan inline before opening PRs
+
+For any non-trivial PR, draft the plan **inline in conversation with the reviewer** before opening the PR. The reviewer iterates on the inline plan until clean; the PR then implements the agreed plan; the reviewer reviews the actual diff against the agreed plan.
+
+The discipline applies to:
+- Multi-file infra PRs (CI changes, devcontainer, build tooling).
+- Any PR that touches `docs/plans/*` or `docs/decisions/*`.
+- Any PR that introduces a vendor dependency or a probe.
+- Any PR that changes branch protection, required status checks, or repo policy.
+
+It does not apply to:
+- Single-line typo fixes.
+- `docs/solutions/` additions ≤ 30 lines.
+- `.gitkeep` placeholders.
+
+The inline-plan structure that has worked for this repo: state the scope with a net-line target, name carry-over preconditions from prior PRs as checkboxes, identify which files change and why, flag any items the reviewer is likely to push back on so they can do so faster. The reviewer redlines; the maker iterates; the PR opens with the agreed plan reflected in its description.
+
+Failure mode this prevents: "I built a thing; now review it" — where the reviewer's first read is also the first time they see the design. That collapses the review surface into either a rubber-stamp or a redo. The inline plan separates "is this the right thing" from "did the implementation match the plan."
+
+## CI workflow changes are queue-flushing
+
+CI workflow files (`.github/workflows/*.yml`) execute from the **PR branch**, not from `main`. A defect in a workflow file therefore propagates to every concurrently-open PR until each one is rebased onto post-fix main. The blast radius of a bad workflow change is every open PR, not just the one that introduced the defect.
+
+**Rule:** CI workflow changes are queue-flushing. Open them at the front of the queue and merge before any other PR opens behind them. Every concurrently-open PR will need a rebase if a workflow change lands during their lifetime.
+
+This rule is not mechanically enforced — there is no CI lint that catches a violation. It lives in this section so the first time someone almost violates it, the note is what catches them.
+
+See [`docs/solutions/SOLUTION_CI_GUARD_VERIFICATION.md`](./docs/solutions/SOLUTION_CI_GUARD_VERIFICATION.md) for the PR #5 → PR #6 → PR #8 → PR #7 defect chain that produced this rule.
+
+## Tool version pins (CI ↔ devcontainer co-change)
+
+CI version pins (in `.github/workflows/ci.yml`) and devcontainer version pins (in `.devcontainer/post-create.sh`) are **co-changed in the same PR**. Drift between them defeats the devcontainer's purpose of reproducing CI exactly.
+
+When a CI pin moves (security update, ecosystem bump), the matching devcontainer pin moves in the same commit. Pins listed in both files at the time of this writing:
+
+| Tool | CI source | Devcontainer source | Current pin |
+| --- | --- | --- | --- |
+| Go | `actions/setup-go@v5 go-version` | devcontainer features | `1.23` |
+| Python | `actions/setup-python@v5 python-version` | devcontainer features | `3.12` |
+| Node | `actions/setup-node@v4 node-version` | devcontainer features | `22` |
+| Rust | n/a (no Rust code in repo yet) | devcontainer features | `latest` until Stage 2 lands Rust code; pin matches CI in same PR thereafter |
+| buf | `bufbuild/buf-setup-action@v1 version` | post-create.sh `PIN_BUF` | `1.45.0` |
+| ruff | `pip install 'ruff==…'` | post-create.sh `PIN_RUFF` | `0.6.*` |
+| mypy | `pip install 'mypy==…'` | post-create.sh `PIN_MYPY` | `1.11.*` |
+| black | `pip install 'black==…'` | post-create.sh `PIN_BLACK` | `26.*` |
+| pip-audit | `pip install 'pip-audit==…'` | post-create.sh `PIN_PIP_AUDIT` | `2.7.*` |
+| golangci-lint | `golangci/golangci-lint-action@v6 version` | post-create.sh `PIN_GOLANGCI_LINT` | `v1.62.0` |
+| govulncheck | `go install …@VERSION` in CI step | post-create.sh `PIN_GOVULNCHECK` | `v1.1.4` |
+
+The Rust pin policy is explicit: "latest" while no Rust code exists in the repo (no CI to align to). The Stage 2 PR that introduces Tauri adds both the CI Rust pin and the matching devcontainer pin in the same commit.
+
 ## Escalation
 
 If anything in [`docs/galileo_os_infrastructure_plan.md`](./docs/galileo_os_infrastructure_plan.md) turns out to be wrong, **do not silently work around it.** Open an issue tagged `plan-deviation`, name the structural finding, propose the revised approach, and wait for sign-off. Plan deviations are normal and welcome; silent workarounds are not.

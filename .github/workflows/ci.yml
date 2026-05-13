@@ -51,7 +51,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: install tools
-        run: pip install "ruff==0.6.*" "mypy==1.11.*" "black==24.*" "pip-audit==2.7.*"
+        run: pip install "ruff==0.6.*" "mypy==1.11.*" "black==26.*" "pip-audit==2.7.*"
       - name: ruff
         run: ruff check .
       - name: black --check
@@ -59,10 +59,15 @@ jobs:
       - name: mypy
         run: mypy --strict onboarding hello
       - name: pip-audit
-        # Strict mode: any vulnerability fails the job. Skipped for the
-        # empty stubs (no dependencies) but wired so it activates the
-        # moment agents/ declares its first runtime dep.
-        run: pip-audit --strict
+        # Scoped to agents/'s declared project dependencies via the
+        # positional project_path argument. Auditing the runner's full
+        # installed env (the default) produces alerts on pip and the
+        # install tooling that no contributor can act on from this repo;
+        # that's noise the discipline rejects. Scoped audit is a no-op
+        # pass today (zero runtime deps) and activates meaningfully when
+        # Stage 1 adds LangGraph / CrewAI / Agno. See
+        # docs/solutions/SOLUTION_CI_EXPANSION_FINDINGS.md.
+        run: pip-audit --strict .
 
   web:
     name: web

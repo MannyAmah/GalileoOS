@@ -5,6 +5,9 @@ description = "Galileo OS Python agents — LangGraph / CrewAI / Agno workers."
 requires-python = ">=3.12"
 authors = [{ name = "Galileo OS contributors" }]
 license = { text = "Apache-2.0" }
+# Stage 0 has zero runtime deps; Stage 1 adds LangGraph / CrewAI / Agno.
+# Explicit empty list suppresses pip-audit's missing-dependencies warning.
+dependencies = []
 
 [build-system]
 requires = ["setuptools>=68"]

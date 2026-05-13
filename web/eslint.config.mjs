@@ -1,22 +1,22 @@
-// Galileo OS — web/ ESLint flat config.
+// Galileo OS — web/ ESLint flat config (native, no FlatCompat).
 //
-// Bridges eslint-config-next (legacy preset) into ESLint 9 flat config
-// via @eslint/eslintrc's FlatCompat. The Stage 0 stub uses Next.js
-// Core Web Vitals + TypeScript presets; rules will be tightened as
-// the admin app grows.
+// Stage 0 uses @eslint/js recommended + typescript-eslint strict for
+// the two stub .tsx files. eslint-config-next is intentionally NOT
+// extended: bridging it through @eslint/eslintrc's FlatCompat surfaces
+// circular-JSON errors (the plugin self-references break serialization),
+// and the two stubs have no Next.js-specific patterns to lint anyway.
+// When Stage 1 ships real Next.js code, eslint-config-next will likely
+// have native flat-config support and is added back in a single line.
+// See docs/solutions/SOLUTION_CI_EXPANSION_FINDINGS.md.
 
-import { FlatCompat } from "@eslint/eslintrc";
-import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({ baseDirectory: __dirname });
-
-export default [
+export default tseslint.config(
   {
     ignores: [".next/**", "node_modules/**", "out/**"],
   },
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
-];
+  js.configs.recommended,
+  ...tseslint.configs.strict,
+  ...tseslint.configs.stylistic,
+);

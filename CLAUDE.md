@@ -144,7 +144,7 @@ When a CI pin moves (security update, ecosystem bump), the matching devcontainer
 | buf | `bufbuild/buf-setup-action@v1 version` | post-create.sh `PIN_BUF` | `1.45.0` |
 | ruff | `pip install 'ruff==…'` | post-create.sh `PIN_RUFF` | `0.6.*` |
 | mypy | `pip install 'mypy==…'` | post-create.sh `PIN_MYPY` | `1.11.*` |
-| black | `pip install 'black==…'` | post-create.sh `PIN_BLACK` | `24.*` |
+| black | `pip install 'black==…'` | post-create.sh `PIN_BLACK` | `26.*` |
 | pip-audit | `pip install 'pip-audit==…'` | post-create.sh `PIN_PIP_AUDIT` | `2.7.*` |
 | golangci-lint | `golangci/golangci-lint-action@v6 version` | post-create.sh `PIN_GOLANGCI_LINT` | `v1.62.0` |
 | govulncheck | `go install …@VERSION` in CI step | post-create.sh `PIN_GOVULNCHECK` | `v1.1.4` |

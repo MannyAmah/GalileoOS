@@ -3,3 +3,9 @@ node_modules/
 out/
 next-env.d.ts
 *.tsbuildinfo
+
+# Stage 0: lockfile is regenerated on every CI run and not yet committed
+# to keep PR diffs focused on stub code. Stage 1+ will commit
+# package-lock.json once web/ has real functionality and reproducible
+# builds matter.
+package-lock.json

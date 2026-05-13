@@ -28,6 +28,16 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.0
+          working-directory: kernel
+          args: --timeout=3m
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck ./...
 
   python:
     name: python
@@ -40,12 +50,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: install ruff + mypy
-        run: pip install "ruff==0.6.*" "mypy==1.11.*"
+      - name: install tools
+        run: pip install "ruff==0.6.*" "mypy==1.11.*" "black==24.*" "pip-audit==2.7.*"
       - name: ruff
         run: ruff check .
+      - name: black --check
+        run: black --check .
       - name: mypy
         run: mypy --strict onboarding hello
+      - name: pip-audit
+        # Strict mode: any vulnerability fails the job. Skipped for the
+        # empty stubs (no dependencies) but wired so it activates the
+        # moment agents/ declares its first runtime dep.
+        run: pip-audit --strict
 
   web:
     name: web
@@ -62,6 +79,13 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: type-check
         run: npx tsc --noEmit
+      - name: eslint
+        run: npx eslint .
+      - name: npm audit
+        # --omit=dev focuses the audit on production dependencies.
+        # Stage 0 skeleton has minimal deps; audit activates as web/
+        # grows.
+        run: npm audit --omit=dev --audit-level=high
 
   protobuf:
     name: protobuf
@@ -79,21 +103,9 @@ jobs:
       - name: buf lint
         run: buf lint
       - name: buf breaking
-        # The check is conditional only for the *introducing* PR (when
-        # schemas/galileo/v1/ does not yet exist on main and there is
-        # nothing to compare against). After PR #5 merges the guard
-        # falls through; breaking runs against origin/main on every PR.
-        # Guard removal is the first checkbox precondition of plan-PR #4.
-        #
         # Uses ref=refs/remotes/origin/main rather than branch=main
         # because actions/checkout only populates the remote-tracking
         # ref, not a local main branch; buf's branch= form resolves
         # against refs/heads/, which we don't have on PR runners.
-        run: |
-          if git -C .. show "origin/main:schemas/galileo/v1/tenant.proto" >/dev/null 2>&1; then
-            echo "main has schemas — running buf breaking against origin/main"
-            buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=schemas'
-          else
-            echo "main has no schemas/ yet (this is the introducing PR)"
-            echo "buf breaking will activate on the next PR after this one merges"
-          fi
+        # See schemas/README.md for the full rationale.
+        run: buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=schemas'

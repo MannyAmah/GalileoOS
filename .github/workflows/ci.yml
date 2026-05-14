@@ -190,3 +190,115 @@ jobs:
         # against refs/heads/, which we don't have on PR runners.
         # See schemas/README.md for the full rationale.
         run: buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=schemas'
+      - name: codegen consistency
+        # Per CLAUDE.md "Generated code convention": developers run
+        # `make generate` after schema changes and commit kernel/gen/.
+        # This step rebuilds generated code in CI and fails if it
+        # differs from what was committed, catching the failure mode
+        # where a schema change merges with stale generated Go.
+        run: |
+          buf generate
+          cd ..
+          git diff --exit-code kernel/gen/ || { echo "::error::kernel/gen/ is out of date — run 'make generate' and commit"; exit 1; }
+
+  agent-runner-integration:
+    # Stage 0 / PR-C: end-to-end test for the agent-runner + workflow +
+    # activity against real Temporal + Postgres + LiteLLM + the gateway
+    # subprocess. Image tags pinned per CLAUDE.md "Service image pins".
+    #
+    # Temporal service container brings in Postgres-as-a-dependency at
+    # the GHA layer; the gateway is run as a subprocess inside a step
+    # (no GHA service-container fit, same shape as PR-B's observability
+    # honest-note for OTel + Jaeger).
+    #
+    # The agent_runner_integration tag excludes these from the default
+    # go test pass.
+    name: agent-runner-integration
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: kernel
+    services:
+      postgres:
+        image: postgres:17.9-alpine
+        env:
+          POSTGRES_USER: galileo
+          POSTGRES_PASSWORD: galileo
+          POSTGRES_DB: galileo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U galileo -d galileo"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 10s
+      temporal:
+        image: temporalio/auto-setup:1.29.6.1
+        env:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: galileo
+          POSTGRES_PWD: galileo
+          POSTGRES_SEEDS: postgres
+        ports:
+          - 7233:7233
+        options: >-
+          --health-cmd "temporal operator cluster health --address temporal:7233"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 60s
+      litellm:
+        image: ghcr.io/berriai/litellm:v1.83.14-stable.patch.3
+        env:
+          LITELLM_LOG: INFO
+          LITELLM_MODE: test
+        ports:
+          - 4000:4000
+        options: >-
+          --health-cmd "bash -c '</dev/tcp/127.0.0.1/4000'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 15s
+    env:
+      GALILEO_GATEWAY_DATABASE_URL: postgres://galileo:galileo@localhost:5432/galileo?sslmode=disable
+      GALILEO_GATEWAY_LITELLM_URL: http://localhost:4000
+      GALILEO_AGENT_GATEWAY_URL: http://localhost:8080
+      GALILEO_AGENT_TEMPORAL_HOSTPORT: localhost:7233
+      GALILEO_COST_EVENTS_SECRET: ci-shared-secret
+      GALILEO_SKIP_OBS_WAIT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: kernel/go.sum
+      - name: generate jwt keypair
+        run: go run ./cmd/jwt-tool genkey -dir auth/dev-keys
+      - name: start gateway subprocess
+        run: |
+          go build -o /tmp/galileo-gateway ./cmd/gateway
+          GALILEO_GATEWAY_DATABASE_URL="$GALILEO_GATEWAY_DATABASE_URL" \
+          GALILEO_GATEWAY_LITELLM_URL="$GALILEO_GATEWAY_LITELLM_URL" \
+          GALILEO_COST_EVENTS_SECRET="$GALILEO_COST_EVENTS_SECRET" \
+          GALILEO_GATEWAY_PUBKEY="$PWD/auth/dev-keys/public.pem" \
+          GALILEO_GATEWAY_OTEL_ENDPOINT="" \
+          /tmp/galileo-gateway >/tmp/gateway.log 2>&1 &
+          echo $! >/tmp/gateway.pid
+          # Wait for /healthz to respond — same bounded-retry shape as the
+          # test setup's observability poller.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/healthz; then break; fi
+            sleep 1
+          done
+      - name: agent-runner integration tests
+        env:
+          GALILEO_AGENT_JWT_PRIVATE_KEY_PATH: ${{ github.workspace }}/kernel/auth/dev-keys/private.pem
+        run: go test -tags=agent_runner_integration -count=1 -v ./cmd/agent-runner/...
+      - name: stop gateway subprocess
+        if: always()
+        run: |
+          if [ -f /tmp/gateway.pid ]; then kill "$(cat /tmp/gateway.pid)" || true; fi
+          cat /tmp/gateway.log || true

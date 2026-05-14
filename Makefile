@@ -13,6 +13,9 @@ help:  ## Show this help.
 
 .PHONY: ci-local
 ci-local:  ## Reproduce the exact CI matrix locally (matches .github/workflows/ci.yml).
+	@echo "==> codegen consistency (make generate must produce no diff)"
+	@cd schemas && buf generate
+	@git diff --exit-code kernel/gen/ || (echo "kernel/gen/ has diff: run 'make generate' and commit the result" && exit 1)
 	@echo "==> kernel/  (go vet + build + test + lint + vuln)"
 	@cd kernel && go vet ./... && go build ./... && go test ./...
 	@cd kernel && golangci-lint run --timeout=3m ./...
@@ -61,6 +64,15 @@ stage0-jwt:  ## Mint a dev JWT. Usage: make stage0-jwt TENANT=<uuid> [TTL=1h] [B
 .PHONY: stage0-gateway-test
 stage0-gateway-test:  ## Run the gateway integration suite. Requires `make up` first.
 	@cd kernel && go test -tags=gateway_integration -count=1 -v ./cmd/gateway/...
+
+.PHONY: stage0-agent-runner-test
+stage0-agent-runner-test:  ## Run the agent-runner integration suite. Requires `make up` + a running gateway subprocess.
+	@cd kernel && go test -tags=agent_runner_integration -count=1 -v ./cmd/agent-runner/...
+
+.PHONY: generate
+generate:  ## Regenerate protobuf Go stubs (developer step; CI verifies the tree matches schemas).
+	@cd schemas && buf generate
+	@echo "==> generated kernel/gen/galileo/v1/*.pb.go. Commit alongside the .proto change."
 
 .PHONY: probe
 probe:  ## Run the Workspace connector probe apparatus tests (synthetic mocks; no real backend import).

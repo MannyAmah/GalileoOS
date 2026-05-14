@@ -1,5 +1,10 @@
 version: v2
+# PR-C lands the codegen pipeline. Plugin pin tracks latest stable per
+# CLAUDE.md "Generated code convention"; generated Go is committed to
+# the repo at kernel/gen/galileo/v1/ and a CI step verifies the tree
+# matches the schemas (make generate && git diff --exit-code kernel/gen/).
+# Developer step: `make generate`. CI does not regenerate.
 plugins:
-  # Codegen wired in PR #4 (CI expansion) when generated Go + Python stubs
-  # are first consumed. Stage 0 PR #3 only lints the schemas.
-  []
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: ../kernel/gen
+    opt: paths=source_relative

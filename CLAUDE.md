@@ -149,10 +149,29 @@ When a CI pin moves (security update, ecosystem bump), the matching devcontainer
 | golangci-lint | `golangci/golangci-lint-action@v7 version` | post-create.sh `PIN_GOLANGCI_LINT` | `v2.12.2` |
 | govulncheck | `go install …@VERSION` in CI step | post-create.sh `PIN_GOVULNCHECK` | `v1.1.4` |
 | prometheus/client_golang | `kernel/go.mod require` | (Go module dep; not installed by devcontainer separately) | `v1.20.5` |
+| golang-jwt/jwt | `kernel/go.mod require` | (Go module dep) | `v5.3.1` |
+| pgx (Postgres driver) | `kernel/go.mod require` | (Go module dep) | `v5.9.2` |
+| google/uuid | `kernel/go.mod require` | (Go module dep) | `v1.6.0` |
 
 The Rust pin policy is explicit: "latest" while no Rust code exists in the repo (no CI to align to). The Stage 2 PR that introduces Tauri adds both the CI Rust pin and the matching devcontainer pin in the same commit.
 
 Go module deps (like `prometheus/client_golang`) are pinned in `kernel/go.mod`. The devcontainer doesn't install Go libraries separately — they're pulled by `go build` / `go test` from go.sum. The co-change discipline still applies to `kernel/go.mod` pins: bumping the version is a deliberate PR-level change, not a `go mod tidy` side effect.
+
+### Service image pins
+
+`deploy/docker-compose.yml` carries service image tags as the operational pin. CLAUDE.md documents the policy and exact tags. Co-changed in the same PR when bumped (the discipline is the same as toolchain pins above; service images are runtime infrastructure, not language baselines, so the latest-1 policy below doesn't apply — service images track latest stable directly).
+
+| Service | Image | Current pin | Health check |
+| --- | --- | --- | --- |
+| Postgres | `postgres:<major>.<minor>-alpine` | `17.9-alpine` | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` |
+| Temporal | `temporalio/auto-setup:<version>` | `1.29.6.1` | `temporal operator cluster health --address temporal:7233` |
+| LiteLLM | `ghcr.io/berriai/litellm:<version>` | `v1.83.14-stable.patch.3` | HTTP `GET /health/liveliness` on port 4000 |
+
+LiteLLM's docs warn against using `main-stable` (their floating tag) — pin to specific stable releases for reproducibility. See PR-A of Week 3 for the precedent that committed the project to image-level pinning.
+
+### Service naming convention
+
+Go cmd directories use short names (`gateway/`, `agent-runner/`, `cost-recon/`, `manifest-check/`). Their `serviceName` log/trace constants use the `galileo-` prefix (`galileo-gateway`, `galileo-agent-runner`, etc.). Directory = layout convention; `serviceName` = identity in logs/Opik/observability.
 
 ### Latest-1 language posture
 
@@ -206,4 +225,4 @@ Long-running facts about this project (repo namespace, locked decisions, v7 rule
 
 ---
 
-*This file is part of the Galileo OS operating contract. Last updated: 2026-05-13. Any change to this file is a PR and requires reviewer approval.*
+*This file is part of the Galileo OS operating contract. Last updated: 2026-05-14. Any change to this file is a PR and requires reviewer approval.*

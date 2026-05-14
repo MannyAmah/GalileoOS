@@ -1,0 +1,89 @@
+# Galileo OS — Stage 0 single-VM docker-compose stack
+#
+# Brings up the runtime dependencies for `galileo-gateway` (and, in
+# later Week 3 PRs, `galileo-agent-runner` and `galileo-web`). Image
+# tags are pinned per CLAUDE.md "Service image pins"; co-changed when
+# bumped.
+#
+# What's NOT in this file (deliberately):
+#   - Opik / observability stack. Original plan named Opik specifically;
+#     the Week 3 inline-plan discovery pass surfaced that Opik's
+#     self-hosted deployment is a 13-container platform. Substrate
+#     decision deferred to PR-B's planning round; PR-B owns the
+#     observability wiring (and the plan-deviation paperwork if a
+#     substitution is chosen).
+#   - `galileo-agent-runner`, `galileo-web` — ship in PR-C.
+#   - `galileo-gateway` is NOT yet wired as a container service. PR-A's
+#     gateway-integration CI job runs the gateway as a local subprocess
+#     against these services; production containerization is part of
+#     the Stage 0 gate-test path in Week 4.
+
+services:
+  postgres:
+    image: postgres:17.9-alpine
+    environment:
+      POSTGRES_USER: galileo
+      POSTGRES_PASSWORD: galileo
+      POSTGRES_DB: galileo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U galileo -d galileo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  temporal:
+    # Bundles temporal-server + auto-init script that wires Postgres on
+    # first boot. The `.1` suffix on 1.29.6.1 is a base-image rebuild
+    # without code change (security update from upstream).
+    image: temporalio/auto-setup:1.29.6.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: galileo
+      POSTGRES_PWD: galileo
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development-sql.yaml
+    ports:
+      - "7233:7233" # gRPC frontend
+      - "8233:8233" # Web UI (Temporal UI)
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # LiteLLM's docs warn against main-stable (their floating tag) — specific
+  # version tags are required for reproducibility. Bump under the
+  # CLAUDE.md "Service image pins" co-change policy when LiteLLM ships
+  # a new stable.
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.83.14-stable.patch.3
+    environment:
+      # Stage 0 dev: no real provider credentials by default. Operators
+      # set OPENAI_API_KEY (or ANTHROPIC_API_KEY etc.) in their local
+      # .env before `make up`. The integration test in CI uses a
+      # fake-LLM mode (LITELLM_MODE=test) that returns canned responses.
+      LITELLM_LOG: INFO
+      LITELLM_MODE: ${LITELLM_MODE:-test}
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "wget -qO- http://localhost:4000/health/liveliness || exit 1"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  postgres-data:

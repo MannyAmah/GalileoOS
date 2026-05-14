@@ -37,9 +37,30 @@ test:  ## Run only the test subset of ci-local.
 	@cd kernel && go test ./...
 
 .PHONY: up
-up:  ## Stage 0 placeholder — Appendix B docker-compose stack lands in Week 3.
-	@echo "make up: not yet wired."
-	@echo "Stage 0 Week 3 lands the docker-compose stack from docs/galileo_os_infrastructure_plan.md Appendix B."
+up:  ## Bring up the Stage 0 compose stack (postgres + temporal + litellm).
+	@docker compose -f deploy/compose/docker-compose.yml up -d
+	@echo "==> compose up. Wait for healthchecks: docker compose -f deploy/compose/docker-compose.yml ps"
+
+.PHONY: down
+down:  ## Tear down the Stage 0 compose stack and clear the postgres volume.
+	@docker compose -f deploy/compose/docker-compose.yml down -v
+
+.PHONY: stage0-jwt-setup
+stage0-jwt-setup:  ## Generate the local Ed25519 dev keypair at kernel/auth/dev-keys/ (gitignored).
+	@cd kernel && go run ./cmd/jwt-tool genkey -dir auth/dev-keys
+
+.PHONY: stage0-jwt
+stage0-jwt:  ## Mint a dev JWT. Usage: make stage0-jwt TENANT=<uuid> [TTL=1h] [BUDGET=50000]
+	@if [ -z "$(TENANT)" ]; then echo "TENANT=<uuid> required"; exit 2; fi
+	@cd kernel && go run ./cmd/jwt-tool mint \
+		-priv auth/dev-keys/private.pem \
+		-tenant "$(TENANT)" \
+		-ttl "$${TTL:-1h}" \
+		-budget "$${BUDGET:-0}"
+
+.PHONY: stage0-gateway-test
+stage0-gateway-test:  ## Run the gateway integration suite. Requires `make up` first.
+	@cd kernel && go test -tags=gateway_integration -count=1 -v ./cmd/gateway/...
 
 .PHONY: probe
 probe:  ## Run the Workspace connector probe apparatus tests (synthetic mocks; no real backend import).

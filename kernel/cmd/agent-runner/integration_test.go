@@ -39,6 +39,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -76,9 +77,20 @@ func setupAgentEnv(t *testing.T) *agentEnv {
 	gatewayURL := envOrDefault("GALILEO_AGENT_GATEWAY_URL", defaultGatewayURL)
 	temporalHostPort := envOrDefault("GALILEO_AGENT_TEMPORAL_HOSTPORT", defaultTemporalHostPort)
 
-	keyDir := t.TempDir()
-	require.NoError(t, auth.GenerateKeypair(keyDir))
-	require.NoError(t, os.Setenv("GALILEO_AGENT_JWT_PRIVATE_KEY_PATH", keyDir+"/private.pem"))
+	// Keypair source: CI sets GALILEO_AGENT_JWT_PRIVATE_KEY_PATH to the
+	// same keypair the gateway subprocess was started with, so the
+	// activity-issued JWTs the gateway receives are signed by a key
+	// the gateway can verify. If that env var is set we reuse the
+	// parent directory; otherwise we generate a fresh keypair in
+	// t.TempDir() (local-dev case).
+	var keyDir string
+	if existingPriv := os.Getenv("GALILEO_AGENT_JWT_PRIVATE_KEY_PATH"); existingPriv != "" {
+		keyDir = filepath.Dir(existingPriv)
+	} else {
+		keyDir = t.TempDir()
+		require.NoError(t, auth.GenerateKeypair(keyDir))
+		require.NoError(t, os.Setenv("GALILEO_AGENT_JWT_PRIVATE_KEY_PATH", keyDir+"/private.pem"))
+	}
 	require.NoError(t, os.Setenv("GALILEO_AGENT_GATEWAY_URL", gatewayURL))
 
 	// Seed a tenant in Postgres with a high budget so the 1-call

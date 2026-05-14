@@ -74,6 +74,8 @@ jobs:
           --health-retries 10
           --health-start-period 10s
       litellm:
+        # LiteLLM's image bundles curl (their own HEALTHCHECK uses it)
+        # but not wget — curl here matches what's actually installed.
         image: ghcr.io/berriai/litellm:v1.83.14-stable.patch.3
         env:
           LITELLM_LOG: INFO
@@ -81,7 +83,7 @@ jobs:
         ports:
           - 4000:4000
         options: >-
-          --health-cmd "wget -qO- http://localhost:4000/health/liveliness || exit 1"
+          --health-cmd "curl -fsS http://localhost:4000/health/liveliness || exit 1"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10

@@ -149,7 +149,7 @@ func TestHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("healthz status: got %d want 200", resp.StatusCode)
 	}
@@ -161,7 +161,7 @@ func TestChatCompletionsRejectsMissingAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status: got %d want 401", resp.StatusCode)
 	}
@@ -176,7 +176,7 @@ func TestChatCompletionsRejectsExpiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status: got %d want 401", resp.StatusCode)
 	}
@@ -202,7 +202,7 @@ func TestChatCompletionsRejectsWrongSignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("wrong-signature: got %d want 401", resp.StatusCode)
 	}
@@ -227,7 +227,7 @@ func TestChatCompletionsForwards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 
 	// LiteLLM in test mode answers with a JSON object; the gateway should
@@ -259,7 +259,7 @@ func TestPostgresUnavailableReturns503(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("Drift-1: with Postgres down expected 503, got %d", resp.StatusCode)
 	}

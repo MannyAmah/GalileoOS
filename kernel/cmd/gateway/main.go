@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -56,7 +55,7 @@ func main() {
 	}
 
 	srv := NewServer(addr, pubKeyPath, tenants, llm, logger)
-	fmt.Fprintf(os.Stdout, "%s listening on %s\n", serviceName, addr)
+	logger.Printf("listening on %s", addr)
 	if err := srv.ListenAndServe(ctx); err != nil {
 		logger.Fatalf("server: %v", err)
 	}

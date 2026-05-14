@@ -66,8 +66,8 @@ stage0-gateway-test:  ## Run the gateway integration suite. Requires `make up` f
 	@cd kernel && go test -tags=gateway_integration -count=1 -v ./cmd/gateway/...
 
 .PHONY: stage0-agent-runner-test
-stage0-agent-runner-test:  ## Run the agent-runner integration suite. Requires `make up` + a running gateway subprocess.
-	@cd kernel && go test -tags=agent_runner_integration -count=1 -v ./cmd/agent-runner/...
+stage0-agent-runner-test:  ## Run the agent-runner integration suite (includes E2E). Requires `make up` + a running gateway subprocess + LiteLLM mock or provider credentials.
+	@cd kernel && GALILEO_AGENT_RUN_E2E=1 go test -tags=agent_runner_integration -count=1 -v ./cmd/agent-runner/...
 
 .PHONY: generate
 generate:  ## Regenerate protobuf Go stubs (developer step; CI verifies the tree matches schemas).

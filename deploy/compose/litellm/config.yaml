@@ -15,3 +15,15 @@
 
 litellm_settings:
   success_callback: ["generic_api"]
+
+# Stage 0 demo model. Returns a mock response without calling any real
+# provider, so `make up` works without OPENAI_API_KEY set. The
+# success_callback still fires, so cost_events ingestion is exercised
+# end-to-end. Replace with real model_list entries when operators want
+# to point at real providers.
+model_list:
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: stage0-dev-mock
+      mock_response: "Hello from Galileo's Hello Agent! (Stage 0 dev mock — no real provider call.)"

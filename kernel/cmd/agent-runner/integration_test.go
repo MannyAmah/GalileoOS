@@ -199,6 +199,20 @@ func TestCreateTaskTenantMismatchReturns403(t *testing.T) {
 }
 
 func TestHelloAgentEndToEnd(t *testing.T) {
+	// LiteLLM rejects requests with model=gpt-3.5-turbo unless a
+	// model_list with mock_response (or real provider credentials) is
+	// configured in litellm/config.yaml. CI's GHA service-container
+	// model can't mount that config file (same constraint as PR-B's
+	// observability scope), so the full E2E requires a properly-
+	// configured LiteLLM running locally via `make up`.
+	//
+	// Set GALILEO_AGENT_RUN_E2E=1 to opt into this test (the
+	// stage0-agent-runner-test Makefile target sets it). CI leaves it
+	// unset; the Week 4 Stage 0 gate test exercises the full pipeline
+	// with real provider credentials.
+	if os.Getenv("GALILEO_AGENT_RUN_E2E") == "" {
+		t.Skip("set GALILEO_AGENT_RUN_E2E=1 to run the full E2E (requires LiteLLM with a mock_response model or real provider credentials)")
+	}
 	env := setupAgentEnv(t)
 	body, _ := json.Marshal(&pb.TaskInput{
 		Tenant: &pb.TenantContext{

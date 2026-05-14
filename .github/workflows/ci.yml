@@ -39,6 +39,72 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
 
+  gateway-integration:
+    # Stage 0 / PR-A: end-to-end test for the gateway against real
+    # Postgres + LiteLLM service containers. Image tags are pinned per
+    # the "Service image pins" table in CLAUDE.md and must move in
+    # lock-step with deploy/compose/docker-compose.yml.
+    #
+    # Service health-cmd options mirror the healthchecks in the compose
+    # file. GitHub Actions blocks `steps` from starting until every
+    # service reports healthy — the analogue of compose's
+    # `depends_on: service_healthy` on the developer's host.
+    #
+    # Temporal is deliberately not started here: PR-A's gateway does
+    # not yet talk to it. PR-C adds Temporal when the agent-runner
+    # ships.
+    name: gateway-integration
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: kernel
+    services:
+      postgres:
+        image: postgres:17.9-alpine
+        env:
+          POSTGRES_USER: galileo
+          POSTGRES_PASSWORD: galileo
+          POSTGRES_DB: galileo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U galileo -d galileo"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 10s
+      litellm:
+        # LiteLLM's runtime image (cgr.dev/chainguard/wolfi-base) ships
+        # neither curl nor wget — just bash, openssl, nodejs, npm,
+        # python3, libsndfile. Use bash's /dev/tcp builtin for a
+        # TCP-ready check; Uvicorn binds port 4000 only after
+        # "Application startup complete" per the boot logs, so port-open
+        # is a meaningful ready signal here. Matches the healthcheck in
+        # deploy/compose/docker-compose.yml.
+        image: ghcr.io/berriai/litellm:v1.83.14-stable.patch.3
+        env:
+          LITELLM_LOG: INFO
+          LITELLM_MODE: test
+        ports:
+          - 4000:4000
+        options: >-
+          --health-cmd "bash -c '</dev/tcp/127.0.0.1/4000'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 15s
+    env:
+      GALILEO_GATEWAY_DATABASE_URL: postgres://galileo:galileo@localhost:5432/galileo?sslmode=disable
+      GALILEO_GATEWAY_LITELLM_URL: http://localhost:4000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: kernel/go.sum
+      - name: gateway integration tests
+        run: go test -tags=gateway_integration -count=1 -v ./cmd/gateway/...
+
   python:
     name: python
     runs-on: ubuntu-24.04

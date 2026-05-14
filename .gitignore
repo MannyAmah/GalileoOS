@@ -18,6 +18,10 @@ Thumbs.db
 *.pem
 *.key
 
+# Stage 0 local dev keypair — explicit alongside the *.pem rule above
+# so the directory itself never accumulates other artifacts.
+kernel/auth/dev-keys/
+
 # Language artifacts (early; will be refined per service in Week 1)
 node_modules/
 dist/

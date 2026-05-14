@@ -74,8 +74,13 @@ jobs:
           --health-retries 10
           --health-start-period 10s
       litellm:
-        # LiteLLM's image bundles curl (their own HEALTHCHECK uses it)
-        # but not wget — curl here matches what's actually installed.
+        # LiteLLM's runtime image (cgr.dev/chainguard/wolfi-base) ships
+        # neither curl nor wget — just bash, openssl, nodejs, npm,
+        # python3, libsndfile. Use bash's /dev/tcp builtin for a
+        # TCP-ready check; Uvicorn binds port 4000 only after
+        # "Application startup complete" per the boot logs, so port-open
+        # is a meaningful ready signal here. Matches the healthcheck in
+        # deploy/compose/docker-compose.yml.
         image: ghcr.io/berriai/litellm:v1.83.14-stable.patch.3
         env:
           LITELLM_LOG: INFO
@@ -83,7 +88,7 @@ jobs:
         ports:
           - 4000:4000
         options: >-
-          --health-cmd "curl -fsS http://localhost:4000/health/liveliness || exit 1"
+          --health-cmd "bash -c '</dev/tcp/127.0.0.1/4000'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10

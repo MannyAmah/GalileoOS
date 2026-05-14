@@ -76,12 +76,14 @@ services:
       LITELLM_MODE: ${LITELLM_MODE:-test}
     ports:
       - "4000:4000"
-    # LiteLLM's image bundles curl (their own HEALTHCHECK uses it) but
-    # not wget — using curl here matches what's actually installed.
+    # LiteLLM's runtime image (cgr.dev/chainguard/wolfi-base) installs
+    # neither curl nor wget — just bash, openssl, nodejs, npm, python3,
+    # libsndfile. Use bash's /dev/tcp builtin for a TCP-ready check.
+    # Uvicorn binds port 4000 only after "Application startup complete"
+    # per the LiteLLM boot logs, so port-open == app-ready for our
+    # purposes (gateway connecting to the proxy).
     healthcheck:
-      test:
-        - "CMD-SHELL"
-        - "curl -fsS http://localhost:4000/health/liveliness || exit 1"
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/4000"]
       interval: 5s
       timeout: 3s
       retries: 10

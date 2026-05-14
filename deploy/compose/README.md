@@ -6,14 +6,14 @@
 
 | PR | Adds to compose | Removes from compose |
 |---|---|---|
-| PR-A (this) | `postgres:17.9-alpine`, `temporalio/auto-setup:1.29.6.1`, `ghcr.io/berriai/litellm:v1.83.14-stable.patch.3` | — |
-| PR-B | Observability backend (substrate decided in PR-B's planning round per `docs/plans/STAGE_0_PLAN.md` §Week 3 deliverable 7) | — |
+| PR-A | `postgres:17.9-alpine`, `temporalio/auto-setup:1.29.6.1`, `ghcr.io/berriai/litellm:v1.83.14-stable.patch.3` | — |
+| PR-B (this) | `jaegertracing/all-in-one:2.18.0`, `otel/opentelemetry-collector-contrib:0.152.0`, LiteLLM `command:` + `volumes:` for generic_api callback config | — |
 | PR-C | `galileo-agent-runner`, `galileo-web` (as proper services rather than local processes) | — |
 
 ## What's deliberately NOT here
 
-- **Opik.** The original plan named Opik for observability. The Week 3 inline-plan discovery pass found Opik's self-hosted deployment is a 13-container platform (MySQL + Redis + ClickHouse + Zookeeper + MinIO + 5 Opik-specific services + Jaeger + OTel collector). Substrate decision deferred to PR-B; if a lighter substitution is chosen there, it lands as a plan-deviation per the four-part template established in PR #13.
-- **`galileo-gateway` as a containerized service.** PR-A runs the gateway as a local subprocess (or as the test binary in CI) against the services above. Containerizing the gateway is part of the Week 4 Stage 0 gate-test path.
+- **Opik.** The original plan named Opik for observability. The Week 3 inline-plan discovery pass found Opik's self-hosted deployment is a 13-container platform (MySQL + Redis + ClickHouse + Zookeeper + MinIO + 5 Opik-specific services + Jaeger + OTel collector). PR-B substituted **Jaeger + OTel collector** as the second plan-deviation in project history; see [`docs/decisions/0004-observability-substrate.md`](../../docs/decisions/0004-observability-substrate.md) and [`docs/closeouts/CLOSEOUT_OPIK_RECONSIDERED.md`](../../docs/closeouts/CLOSEOUT_OPIK_RECONSIDERED.md).
+- **`galileo-gateway` as a containerized service.** PR-A and PR-B run the gateway as a local subprocess (or as the test binary in CI) against the services above. Containerizing the gateway is part of the Week 4 Stage 0 gate-test path.
 
 ## Pin policy
 

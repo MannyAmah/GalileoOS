@@ -1,22 +1,15 @@
 # Galileo OS — Stage 0 single-VM docker-compose stack
 #
-# Brings up the runtime dependencies for `galileo-gateway` (and, in
-# later Week 3 PRs, `galileo-agent-runner` and `galileo-web`). Image
-# tags are pinned per CLAUDE.md "Service image pins"; co-changed when
-# bumped.
+# Brings up the runtime dependencies for `galileo-gateway` (PR-A landed
+# postgres + temporal + litellm; PR-B adds jaeger + otel-collector). PR-C
+# wires `galileo-agent-runner` and `galileo-web` as services. Image tags
+# are pinned per CLAUDE.md "Service image pins"; co-changed when bumped.
 #
-# What's NOT in this file (deliberately):
-#   - Opik / observability stack. Original plan named Opik specifically;
-#     the Week 3 inline-plan discovery pass surfaced that Opik's
-#     self-hosted deployment is a 13-container platform. Substrate
-#     decision deferred to PR-B's planning round; PR-B owns the
-#     observability wiring (and the plan-deviation paperwork if a
-#     substitution is chosen).
-#   - `galileo-agent-runner`, `galileo-web` — ship in PR-C.
-#   - `galileo-gateway` is NOT yet wired as a container service. PR-A's
-#     gateway-integration CI job runs the gateway as a local subprocess
-#     against these services; production containerization is part of
-#     the Stage 0 gate-test path in Week 4.
+# What's NOT in this file:
+#   - `galileo-gateway` as a container. The gateway-integration CI job
+#     runs the gateway as a subprocess against these services;
+#     production containerization is part of the Stage 0 gate-test path
+#     in Week 4.
 
 services:
   postgres:
@@ -74,6 +67,14 @@ services:
       # fake-LLM mode (LITELLM_MODE=test) that returns canned responses.
       LITELLM_LOG: INFO
       LITELLM_MODE: ${LITELLM_MODE:-test}
+      # generic_api callback config — PR-B wires the success_callback to
+      # POST every LLM call's StandardLoggingPayload to the gateway's
+      # /internal/cost-events handler.
+      GENERIC_LOGGER_ENDPOINT: ${GALILEO_COST_EVENTS_URL:-http://host.docker.internal:8080/internal/cost-events}
+      GENERIC_LOGGER_HEADERS: ${GALILEO_COST_EVENTS_HEADERS:-Authorization=Bearer change-me}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml"]
     ports:
       - "4000:4000"
     # LiteLLM's runtime image (cgr.dev/chainguard/wolfi-base) installs
@@ -88,6 +89,33 @@ services:
       timeout: 3s
       retries: 10
       start_period: 15s
+
+  # Jaeger v2 all-in-one bundles collector + query + UI in one container.
+  # Alpine-based, so utilities exist, but we still leave the healthcheck
+  # to the test-setup poller (symmetric with otel-collector below); the
+  # test setup polls http://localhost:16686/ during initialization.
+  jaeger:
+    image: jaegertracing/all-in-one:2.18.0
+    ports:
+      - "16686:16686" # UI
+      - "4317"        # OTLP gRPC (not host-published; otel-collector hits it on the compose network)
+
+  # OTel collector contrib v0.152.0. Image is FROM scratch (no shell, no
+  # utilities) so docker healthcheck commands don't work; test-setup
+  # polls http://localhost:13133/ for readiness instead. Dev host uses
+  # the upstream image + command override; CI builds a wrapper image
+  # (see deploy/compose/otel-wrapper/) because GHA service-containers
+  # can't override CMD or mount config files.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.152.0
+    command: ["--config", "/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC (gateway sends spans here)
+      - "13133:13133" # health_check extension
+    depends_on:
+      - jaeger
 
 volumes:
   postgres-data:

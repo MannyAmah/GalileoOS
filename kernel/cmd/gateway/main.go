@@ -1,19 +1,25 @@
 // Package main is the Galileo API gateway entry point.
 //
-// Stage 0 / PR-A: HTTP server with JWT verification (Ed25519 dev keypair),
-// Postgres-fresh tenant resolution, and a LiteLLM passthrough. Configured
-// entirely from environment variables so the same binary can run from
-// the developer's host (against `make up` compose services) or from CI's
-// service-container job.
+// Stage 0 / PR-B capability: JWT verification, Postgres-fresh tenant
+// resolution, LiteLLM passthrough with metadata injection, budget cap
+// enforcement, cost_events webhook ingestion, OpenTelemetry span
+// emission. Configured entirely from environment variables.
 //
-// Environment variables (all required unless noted):
+// Environment variables (* = required):
 //
-//	GALILEO_GATEWAY_ADDR        Listen address          default ":8080"
-//	GALILEO_GATEWAY_PUBKEY      Path to JWT public key  default "kernel/auth/dev-keys/public.pem"
-//	GALILEO_GATEWAY_DATABASE_URL  Postgres DSN          (no default)
-//	GALILEO_GATEWAY_LITELLM_URL   LiteLLM base URL      default "http://localhost:4000"
+//   GALILEO_GATEWAY_ADDR             listen address       default ":8080"
+//   GALILEO_GATEWAY_PUBKEY           JWT public key path  default "kernel/auth/dev-keys/public.pem"
+//   GALILEO_GATEWAY_DATABASE_URL *   Postgres DSN
+//   GALILEO_GATEWAY_LITELLM_URL      LiteLLM base URL     default "http://localhost:4000"
+//   GALILEO_GATEWAY_OTEL_ENDPOINT    OTel collector OTLP  default "localhost:4317"
+//   GALILEO_COST_EVENTS_SECRET *     shared secret for LiteLLM webhook
 //
-// Wiring scope deferred to later PRs is enumerated in server.go.
+// Boot sequence (each step exits the process on failure — fail-loud):
+//
+//   1. Open pgxpool
+//   2. Run embedded migrations (kernel/cmd/gateway/migrations/)
+//   3. Init OTel tracer provider
+//   4. Wire Server with dependencies + start HTTP listen
 package main
 
 import (
@@ -22,6 +28,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -38,6 +45,11 @@ func main() {
 		logger.Fatalf("GALILEO_GATEWAY_DATABASE_URL is required")
 	}
 	llmURL := envOr("GALILEO_GATEWAY_LITELLM_URL", "http://localhost:4000")
+	otelEndpoint := envOr("GALILEO_GATEWAY_OTEL_ENDPOINT", "localhost:4317")
+	costEventsSecret := os.Getenv("GALILEO_COST_EVENTS_SECRET")
+	if costEventsSecret == "" {
+		logger.Fatalf("GALILEO_COST_EVENTS_SECRET is required (shared with LiteLLM's GENERIC_LOGGER_HEADERS)")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -48,13 +60,30 @@ func main() {
 	}
 	defer pool.Close()
 
+	migrationCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	if err := RunMigrations(migrationCtx, pool); err != nil {
+		cancel()
+		logger.Fatalf("migrations: %v", err)
+	}
+	cancel()
+
+	otelShutdown, err := InitTracer(ctx, otelEndpoint)
+	if err != nil {
+		logger.Fatalf("otel tracer: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = otelShutdown(shutdownCtx)
+	}()
+
 	tenants := NewTenantResolver(pool)
 	llm, err := NewLiteLLMClient(llmURL)
 	if err != nil {
 		logger.Fatalf("litellm client: %v", err)
 	}
 
-	srv := NewServer(addr, pubKeyPath, tenants, llm, logger)
+	srv := NewServer(addr, pubKeyPath, costEventsSecret, tenants, llm, pool, logger)
 	logger.Printf("listening on %s", addr)
 	if err := srv.ListenAndServe(ctx); err != nil {
 		logger.Fatalf("server: %v", err)

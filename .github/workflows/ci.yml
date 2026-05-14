@@ -96,6 +96,16 @@ jobs:
     env:
       GALILEO_GATEWAY_DATABASE_URL: postgres://galileo:galileo@localhost:5432/galileo?sslmode=disable
       GALILEO_GATEWAY_LITELLM_URL: http://localhost:4000
+      # PR-B observability-substrate scope note: Jaeger + OTel collector run
+      # as compose services on the dev host (`make up`) but NOT as GHA service
+      # containers here. The OTel collector image is FROM scratch (no shell
+      # for --health-cmd) and the wrapper-image approach can't run as a GHA
+      # service container (services start before steps, can't reference a
+      # locally-built image). The Stage 0 Week 4 gate test exercises the
+      # full observability pipeline; PR-B's CI gate scopes to gateway
+      # behavior alone. GALILEO_SKIP_OBS_WAIT bypasses the test setup's
+      # bounded-retry polling for the OTel + Jaeger endpoints.
+      GALILEO_SKIP_OBS_WAIT: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

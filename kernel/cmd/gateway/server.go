@@ -1,19 +1,26 @@
-// galileo-gateway HTTP server. Stage 0 / PR-A capability:
+// galileo-gateway HTTP server. Stage 0 capability matrix:
 //
+// PR-A:
 //   - JWT verification on every request (Ed25519, see kernel/auth)
 //   - TenantContext resolution: Postgres-fresh read of monthly_budget_cents
-//     on every request (no JWT-cached fallback; Drift-1 resolution from
-//     Week 3 inline-plan round)
+//     on every request (no JWT-cached fallback; Drift-1)
 //   - LiteLLM passthrough — proxies the request body to the LiteLLM
-//     container, returns the response unchanged
+//     container
 //
-// Out of scope for PR-A (lands in PR-B):
-//   - cost_events writing on LiteLLM usage callbacks
-//   - budget cap enforcement (sum cost_events vs monthly_budget_cents)
-//   - observability span emission
+// PR-B:
+//   - Budget cap enforcement (sum cost_events vs monthly_budget_cents,
+//     HTTP 402 deny on overage)
+//   - cost_events ingestion via /internal/cost-events webhook (LiteLLM
+//     generic_api callback POSTs StandardLoggingPayload here)
+//   - OpenTelemetry span emission per request (Jaeger + OTel collector;
+//     second plan-deviation, see docs/decisions/0004-observability-substrate.md)
+//   - galileo_request_id generation + body metadata injection (so the
+//     callback can correlate spend back to the gateway-issued request)
 //
-// Out of scope for PR-A (lands in PR-C):
-//   - workflow ID propagation to cost_events rows
+// Out of scope for PR-B (lands in PR-C):
+//   - workflow ID propagation via AgentOutput.cost_event_request_ids
+//     (Drift-2; the proto field exists in PR-B but no Go consumer yet)
+//   - agent-runner, Hello Agent, web UI
 
 package main
 
@@ -26,36 +33,57 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Server wires HTTP routes, auth middleware, tenant resolver, and the
-// LiteLLM passthrough handler.
+// Server wires HTTP routes, auth middleware, tenant resolver, budget
+// middleware, OTel middleware, the LiteLLM forwarder, and the
+// cost_events webhook receiver.
 type Server struct {
-	addr       string
-	tenants    *TenantResolver
-	llm        *LiteLLMClient
-	pubKeyPath string
-	logger     *log.Logger
+	addr             string
+	tenants          *TenantResolver
+	llm              *LiteLLMClient
+	pool             *pgxpool.Pool
+	pubKeyPath       string
+	logger           *log.Logger
+	costEventsSecret string
 }
 
 // NewServer constructs a Server. Callers wire dependencies; ListenAndServe
 // runs the HTTP loop until ctx cancels or http.Server.Shutdown is called.
-func NewServer(addr, pubKeyPath string, tenants *TenantResolver, llm *LiteLLMClient, logger *log.Logger) *Server {
+func NewServer(addr, pubKeyPath, costEventsSecret string, tenants *TenantResolver, llm *LiteLLMClient, pool *pgxpool.Pool, logger *log.Logger) *Server {
 	return &Server{
-		addr:       addr,
-		tenants:    tenants,
-		llm:        llm,
-		pubKeyPath: pubKeyPath,
-		logger:     logger,
+		addr:             addr,
+		tenants:          tenants,
+		llm:              llm,
+		pool:             pool,
+		pubKeyPath:       pubKeyPath,
+		logger:           logger,
+		costEventsSecret: costEventsSecret,
 	}
 }
 
 // Handler returns the http.Handler with all routes mounted. Exposed so
 // the integration test can hit the same handler without binding a port.
+//
+// Middleware order on the chat-completions path:
+//   tracingMiddleware (root span)
+//     → authMiddleware (JWT verify + Postgres-fresh tenant resolve)
+//       → budgetMiddleware (sum cost_events vs cap, 402 on overage)
+//         → chatCompletions handler
+//
+// /internal/cost-events is *not* behind authMiddleware — it auths via a
+// shared secret in Authorization: Bearer (set by GALILEO_COST_EVENTS_SECRET
+// on both this gateway and LiteLLM's GENERIC_LOGGER_HEADERS env). LiteLLM
+// is not a tenant; we don't issue it a JWT.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
-	mux.Handle("POST /v1/chat/completions", s.authMiddleware(http.HandlerFunc(s.chatCompletions)))
+	mux.Handle("POST /v1/chat/completions",
+		tracingMiddleware(s.authMiddleware(s.budgetMiddleware(http.HandlerFunc(s.chatCompletions)))))
+	mux.HandleFunc("POST /internal/cost-events", s.costEventsHandler)
 	return mux
 }
 
@@ -102,8 +130,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		ctx, err := s.tenants.Resolve(r.Context(), s.pubKeyPath, raw)
 		if err != nil {
 			s.logger.Printf("auth: tenant resolve failed: %v", err)
-			// 503 specifically when Postgres is unreachable; 401 for
-			// token-level failures.
 			if errors.Is(err, ErrPostgresUnavailable) {
 				writeErr(w, http.StatusServiceUnavailable, "tenant store unavailable")
 				return
@@ -115,9 +141,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// chatCompletions proxies the request body to LiteLLM and returns the
-// response unchanged. PR-B will add usage-event capture and cost_events
-// row writing here.
+// chatCompletions reads the request body, generates a galileo_request_id,
+// forwards to LiteLLM with the id + tenant_id injected into the body's
+// metadata field, and returns the response unchanged.
 func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	tc := TenantFromContext(r.Context())
 	body, err := io.ReadAll(r.Body)
@@ -125,13 +151,17 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "read body: "+err.Error())
 		return
 	}
-	resp, err := s.llm.Forward(r.Context(), "/v1/chat/completions", body)
+	requestID := uuid.Must(uuid.NewV7()).String()
+	SetSpanTenantAttrs(r.Context(), tc.TenantID, requestID)
+
+	resp, err := s.llm.Forward(r.Context(), "/v1/chat/completions", body, tc.TenantID, requestID)
 	if err != nil {
-		s.logger.Printf("litellm: forward failed for tenant=%s: %v", tc.TenantID, err)
+		s.logger.Printf("litellm: forward failed for tenant=%s request_id=%s: %v", tc.TenantID, requestID, err)
 		writeErr(w, http.StatusBadGateway, "upstream failed")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+	w.Header().Set("x-galileo-request-id", requestID)
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
@@ -145,4 +175,13 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// writeJSON encodes v as JSON into w. Content-Type and status must be
+// set by the caller before invoking. Errors from the encoder are
+// returned for the caller to log; the response has already begun
+// streaming by the time encoding starts, so there's no useful
+// HTTP-level recovery.
+func writeJSON(w http.ResponseWriter, v any) error {
+	return json.NewEncoder(w).Encode(v)
 }

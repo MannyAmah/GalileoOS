@@ -1,0 +1,17 @@
+# LiteLLM proxy config for Stage 0.
+#
+# generic_api callback POSTs every successful LLM call's
+# StandardLoggingPayload to the gateway's /internal/cost-events handler.
+# The endpoint URL and shared-secret header come from
+# GENERIC_LOGGER_ENDPOINT and GENERIC_LOGGER_HEADERS env vars set in
+# docker-compose.yml — keeping them out of this file means rotating
+# the secret doesn't touch the config mount.
+#
+# The OSS generic_api implementation lives at
+# litellm/integrations/generic_api/generic_api_callback.py — verified
+# at PR-B planning time despite the docs page framing the feature as
+# enterprise. See docs/solutions/SOLUTION_DEPENDENCY_SHAPE_VERIFICATION.md
+# for the docs-vs-code divergence note.
+
+litellm_settings:
+  success_callback: ["generic_api"]

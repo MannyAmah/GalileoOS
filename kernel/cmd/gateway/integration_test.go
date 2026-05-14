@@ -1,21 +1,24 @@
 // Build-tagged integration test for the Stage 0 gateway. Runs under the
 // `gateway_integration` build tag so it is excluded from the default
 // `go test ./...` run. CI's gateway-integration job sets the tag and
-// brings up real Postgres + LiteLLM service containers; developers run
-// it locally via `make stage0-gateway-test` after `make up`.
+// brings up real Postgres + LiteLLM + Jaeger + OTel-collector service
+// containers; developers run it locally via `make stage0-gateway-test`
+// after `make up`.
 //
-// What it verifies (PR-A scope):
-//   - JWT verification: missing / wrong-issuer / expired tokens are rejected.
-//   - Postgres-fresh tenant resolution: monthly_budget_cents in the JWT
-//     is *ignored*; the value returned to the handler comes from Postgres.
-//   - LiteLLM passthrough: the request body reaches LiteLLM and the
-//     response body returns unchanged.
-//   - Postgres-unavailable behavior (Drift-1): pool closed → 503.
+// What it verifies (cumulative through PR-B):
+//   - JWT verification: missing / wrong-signature / expired tokens are rejected.
+//   - Postgres-fresh tenant resolution: JWT-cached budget is ignored.
+//   - LiteLLM passthrough with body metadata injection (PR-B).
+//   - Postgres-unavailable → 503 (Drift-1).
+//   - Budget cap enforcement (PR-B): cost_events sum ≥ cap → 402.
+//   - Cost-events webhook (PR-B): valid payload + shared secret → row written.
+//   - Cost-events webhook auth (PR-B): missing/wrong secret → 401.
 //
-// What it does NOT verify (deferred per server.go's out-of-scope notes):
-//   - cost_events writing (PR-B).
-//   - Budget cap enforcement (PR-B).
-//   - workflow_id correlation (PR-C).
+// What it does NOT verify (deferred):
+//   - workflow ID correlation (PR-C).
+//   - Live Jaeger/OTel span emission roundtrip — Stage 0 boots both
+//     services and waits for readiness, but doesn't assert traces land
+//     in Jaeger's index. That's a Week 4 gate-test concern.
 
 //go:build gateway_integration
 
@@ -24,6 +27,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -39,41 +43,38 @@ import (
 )
 
 const (
-	defaultDBURL  = "postgres://galileo:galileo@localhost:5432/galileo?sslmode=disable"
-	defaultLLMURL = "http://localhost:4000"
+	defaultDBURL              = "postgres://galileo:galileo@localhost:5432/galileo?sslmode=disable"
+	defaultLLMURL             = "http://localhost:4000"
+	defaultOTelHealthURL      = "http://localhost:13133/"
+	defaultJaegerUIURL        = "http://localhost:16686/"
+	testCostEventsSecret      = "integration-test-secret"
 )
 
-// testEnv bundles the setup the integration tests share: keypair on disk,
-// a real Postgres pool with a tenants row, the gateway handler bound to
-// an httptest.Server, and a teardown closure.
+// testEnv bundles the setup the integration tests share: keypair on
+// disk, a real Postgres pool with migrations applied, the gateway
+// handler bound to an httptest.Server, and a teardown closure.
 type testEnv struct {
-	keyDir   string
-	pubKey   string
-	privKey  string
-	pool     *pgxpool.Pool
-	server   *httptest.Server
-	tenantID string
-	cleanup  func()
+	keyDir    string
+	pubKey    string
+	privKey   string
+	pool      *pgxpool.Pool
+	server    *httptest.Server
+	tenantID  string
+	cleanup   func()
 }
 
 func setupEnv(t *testing.T) *testEnv {
 	t.Helper()
 
-	dbURL := os.Getenv("GALILEO_GATEWAY_DATABASE_URL")
-	if dbURL == "" {
-		dbURL = defaultDBURL
-	}
-	llmURL := os.Getenv("GALILEO_GATEWAY_LITELLM_URL")
-	if llmURL == "" {
-		llmURL = defaultLLMURL
-	}
+	dbURL := envOrDefault("GALILEO_GATEWAY_DATABASE_URL", defaultDBURL)
+	llmURL := envOrDefault("GALILEO_GATEWAY_LITELLM_URL", defaultLLMURL)
 
 	keyDir := t.TempDir()
 	if err := auth.GenerateKeypair(keyDir); err != nil {
 		t.Fatalf("generate keypair: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	pool, err := pgxpool.New(ctx, dbURL)
@@ -81,14 +82,11 @@ func setupEnv(t *testing.T) *testEnv {
 		t.Fatalf("connect postgres: %v", err)
 	}
 
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS tenants (
-			tenant_id UUID PRIMARY KEY,
-			monthly_budget_cents BIGINT NOT NULL
-		)
-	`); err != nil {
+	// Apply embedded migrations — same code path the gateway runs at
+	// startup, so the integration test exercises the real schema.
+	if err := RunMigrations(ctx, pool); err != nil {
 		pool.Close()
-		t.Fatalf("create tenants table: %v", err)
+		t.Fatalf("migrations: %v", err)
 	}
 
 	tenantID := uuid.Must(uuid.NewV7()).String()
@@ -100,6 +98,13 @@ func setupEnv(t *testing.T) *testEnv {
 		t.Fatalf("insert tenant: %v", err)
 	}
 
+	// Wait for OTel collector + Jaeger so span emission doesn't fail
+	// silently inside the test. Bounded retries with explicit failure
+	// messages so the next CI iteration is debuggable without log
+	// spelunking.
+	waitForReady(t, defaultOTelHealthURL, "OTel collector")
+	waitForReady(t, defaultJaegerUIURL, "Jaeger UI")
+
 	tenants := NewTenantResolver(pool)
 	llm, err := NewLiteLLMClient(llmURL)
 	if err != nil {
@@ -107,7 +112,7 @@ func setupEnv(t *testing.T) *testEnv {
 		t.Fatalf("litellm client: %v", err)
 	}
 	logger := log.New(io.Discard, "", 0)
-	gw := NewServer(":0", keyDir+"/public.pem", tenants, llm, logger)
+	gw := NewServer(":0", keyDir+"/public.pem", testCostEventsSecret, tenants, llm, pool, logger)
 	srv := httptest.NewServer(gw.Handler())
 
 	env := &testEnv{
@@ -120,15 +125,47 @@ func setupEnv(t *testing.T) *testEnv {
 	}
 	env.cleanup = func() {
 		srv.Close()
-		// Don't drop the table — other tests in the same run share it
-		// keyed on the unique tenantID. Just remove this run's row.
+		// Don't drop tables — parallel tests in the same run share the
+		// schema, keyed on unique tenantIDs. Clean up this run's rows.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		_, _ = pool.Exec(ctx, `DELETE FROM cost_events WHERE tenant_id = $1`, tenantID)
 		_, _ = pool.Exec(ctx, `DELETE FROM tenants WHERE tenant_id = $1`, tenantID)
 		pool.Close()
 	}
 	t.Cleanup(env.cleanup)
 	return env
+}
+
+// waitForReady polls url every 1s up to 30 times, returning when the
+// endpoint answers with 2xx. On exhaustion it calls t.Fatalf with a
+// clear failure message so the next CI iteration is tractable without
+// spelunking through container logs. Skipped entirely when GALILEO_SKIP_OBS_WAIT
+// is set (dev hosts that don't run observability locally).
+func waitForReady(t *testing.T, url, label string) {
+	t.Helper()
+	if os.Getenv("GALILEO_SKIP_OBS_WAIT") != "" {
+		t.Logf("waitForReady: skipping %s (GALILEO_SKIP_OBS_WAIT set)", label)
+		return
+	}
+	for i := 0; i < 30; i++ {
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode < 300 {
+				return
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+	t.Fatalf("%s did not become ready at %s within 30s", label, url)
+}
+
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 func (e *testEnv) mintToken(t *testing.T, c auth.Claims, ttl time.Duration) string {
@@ -182,10 +219,6 @@ func TestChatCompletionsRejectsExpiredToken(t *testing.T) {
 	}
 }
 
-// TestChatCompletionsRejectsWrongSignature exercises the Stage-1 swap
-// risk: if the gateway's public key changes without a matching private-key
-// rotation, every existing token must be rejected at the integration
-// boundary, not just by the auth/ unit tests.
 func TestChatCompletionsRejectsWrongSignature(t *testing.T) {
 	env := setupEnv(t)
 	otherDir := t.TempDir()
@@ -208,17 +241,10 @@ func TestChatCompletionsRejectsWrongSignature(t *testing.T) {
 	}
 }
 
-// TestChatCompletionsForwards verifies the happy path: a valid token,
-// a tenant row in Postgres, and a request body that reaches LiteLLM's
-// /v1/chat/completions endpoint. With LITELLM_MODE=test, LiteLLM returns
-// a canned response — we only assert the proxy reached it (2xx or a
-// LiteLLM-shaped 4xx with a JSON body), not the contents.
 func TestChatCompletionsForwards(t *testing.T) {
 	env := setupEnv(t)
 	body := `{"model":"gpt-3.5-turbo","messages":[{"role":"user","content":"hi"}]}`
-	tok := env.mintToken(t, auth.Claims{
-		MonthlyBudgetCents: 1, // informational; gateway should ignore this
-	}, time.Hour)
+	tok := env.mintToken(t, auth.Claims{MonthlyBudgetCents: 1}, time.Hour)
 
 	req, _ := http.NewRequest(http.MethodPost, env.server.URL+"/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -230,12 +256,11 @@ func TestChatCompletionsForwards(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 
-	// LiteLLM in test mode answers with a JSON object; the gateway should
-	// hand back exactly what LiteLLM returned. We accept any 2xx/4xx
-	// (LiteLLM-shaped) as proof the proxy hop worked — a 5xx means the
-	// proxy itself failed.
 	if resp.StatusCode >= 500 {
 		t.Fatalf("upstream-mediated failure: status=%d body=%s", resp.StatusCode, respBody)
+	}
+	if got := resp.Header.Get("x-galileo-request-id"); got == "" {
+		t.Error("response missing x-galileo-request-id header (PR-B should always set it)")
 	}
 	var parsed any
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
@@ -243,14 +268,9 @@ func TestChatCompletionsForwards(t *testing.T) {
 	}
 }
 
-// TestPostgresUnavailableReturns503 exercises Drift-1: when the tenant
-// store is unreachable, the gateway must deny with 503 rather than fall
-// back to the JWT-cached budget value.
 func TestPostgresUnavailableReturns503(t *testing.T) {
 	env := setupEnv(t)
 	tok := env.mintToken(t, auth.Claims{}, time.Hour)
-
-	// Close the pool to force connection failures on subsequent queries.
 	env.pool.Close()
 
 	req, _ := http.NewRequest(http.MethodPost, env.server.URL+"/v1/chat/completions", strings.NewReader(`{}`))
@@ -262,5 +282,140 @@ func TestPostgresUnavailableReturns503(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("Drift-1: with Postgres down expected 503, got %d", resp.StatusCode)
+	}
+}
+
+// TestBudgetCapDeniesWith402 (PR-B): with spend already at the cap, the
+// next request is denied with HTTP 402 Payment Required. Exercises the
+// loop A enforcement path: read sum(cost_cents) for the current month,
+// compare to TenantContext.MonthlyBudgetCents, deny on overage.
+func TestBudgetCapDeniesWith402(t *testing.T) {
+	env := setupEnv(t)
+	ctx := context.Background()
+
+	// Insert one cost_events row that equals the tenant's budget so the
+	// next request sums to spend == cap (deny is >= cap).
+	_, err := env.pool.Exec(ctx, `
+		INSERT INTO cost_events (request_id, tenant_id, event_ts, cost_cents, provider, model)
+		VALUES ($1, $2, now(), 99999, 'test', 'test-model')
+	`, uuid.Must(uuid.NewV7()).String(), env.tenantID)
+	if err != nil {
+		t.Fatalf("seed cost_events: %v", err)
+	}
+
+	tok := env.mintToken(t, auth.Claims{}, time.Hour)
+	req, _ := http.NewRequest(http.MethodPost, env.server.URL+"/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-3.5-turbo","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 at budget cap, got %d", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Errorf("402 body not JSON: %v", err)
+	}
+	if body["error"] != "monthly_budget_cents exceeded" {
+		t.Errorf("402 body.error: got %v, want 'monthly_budget_cents exceeded'", body["error"])
+	}
+}
+
+// TestCostEventsWebhookRoundtrip (PR-B): POSTing a synthetic
+// StandardLoggingPayload to /internal/cost-events writes a row that the
+// budget middleware can then see. Verifies the OSS metadata channel
+// (requester_metadata.galileo_*) end-to-end.
+func TestCostEventsWebhookRoundtrip(t *testing.T) {
+	env := setupEnv(t)
+	requestID := uuid.Must(uuid.NewV7()).String()
+
+	payload := fmt.Sprintf(`[{
+		"id": "litellm-internal-id-001",
+		"response_cost": 0.0125,
+		"model": "gpt-3.5-turbo",
+		"custom_llm_provider": "openai",
+		"endTime": %d.5,
+		"metadata": {"requester_metadata": {"galileo_tenant_id": "%s", "galileo_request_id": "%s"}}
+	}]`, time.Now().Unix(), env.tenantID, requestID)
+
+	req, _ := http.NewRequest(http.MethodPost, env.server.URL+"/internal/cost-events", strings.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+testCostEventsSecret)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("webhook returned %d: %s", resp.StatusCode, body)
+	}
+
+	// Verify the row landed with the expected fields.
+	var costCents int64
+	var model string
+	err = env.pool.QueryRow(context.Background(),
+		`SELECT cost_cents, model FROM cost_events WHERE request_id = $1`, requestID,
+	).Scan(&costCents, &model)
+	if err != nil {
+		t.Fatalf("cost_events row not found: %v", err)
+	}
+	if costCents != 1 { // 0.0125 dollars = 1.25 cents → rounded to 1
+		t.Errorf("cost_cents: got %d, want 1 (0.0125 × 100 rounded)", costCents)
+	}
+	if model != "gpt-3.5-turbo" {
+		t.Errorf("model: got %q, want gpt-3.5-turbo", model)
+	}
+}
+
+// TestCostEventsWebhookRejectsMissingSecret (PR-B): the webhook auths
+// via shared secret in Authorization: Bearer. Missing → 401.
+func TestCostEventsWebhookRejectsMissingSecret(t *testing.T) {
+	env := setupEnv(t)
+	req, _ := http.NewRequest(http.MethodPost, env.server.URL+"/internal/cost-events", strings.NewReader(`[]`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("missing secret: got %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestCostEventsWebhookIdempotency (PR-B): re-posting the same
+// galileo_request_id is a no-op — the ON CONFLICT (request_id) DO NOTHING
+// clause prevents double-counting if LiteLLM retries the callback.
+func TestCostEventsWebhookIdempotency(t *testing.T) {
+	env := setupEnv(t)
+	requestID := uuid.Must(uuid.NewV7()).String()
+	payload := fmt.Sprintf(`[{
+		"id": "litellm-id-dup", "response_cost": 0.02, "model": "m", "custom_llm_provider": "p", "endTime": %d,
+		"metadata": {"requester_metadata": {"galileo_tenant_id": "%s", "galileo_request_id": "%s"}}
+	}]`, time.Now().Unix(), env.tenantID, requestID)
+
+	for i := 0; i < 3; i++ {
+		req, _ := http.NewRequest(http.MethodPost, env.server.URL+"/internal/cost-events", strings.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer "+testCostEventsSecret)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("POST iteration %d: %v", i, err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	var count int
+	err := env.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM cost_events WHERE request_id = $1`, requestID,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("count cost_events: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("idempotency: got %d rows, want 1 (re-POST should DO NOTHING)", count)
 	}
 }

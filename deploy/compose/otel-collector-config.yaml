@@ -1,0 +1,40 @@
+# Stage 0 OTel collector config.
+#
+# Receives OTLP from galileo-gateway, exports to Jaeger via OTLP gRPC,
+# exposes a health_check endpoint on 13133 so the gateway-integration
+# test setup can poll for readiness before running tests that emit
+# spans.
+#
+# In CI, this file is loaded into the OTELCOL_CONFIG env var by a
+# workflow step and consumed via `--config=env:OTELCOL_CONFIG` (set in
+# the wrapper image's CMD; see deploy/compose/otel-wrapper/). On the
+# dev host, compose mounts this file at /etc/otelcol-contrib/config.yaml.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]

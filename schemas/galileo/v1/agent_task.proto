@@ -49,6 +49,13 @@ message AgentOutput {
   // Cost incurred by this agent run, in integer cents. Reconciled
   // against Stripe per STAGE_0_PLAN.md §Week 3 deliverable 6.
   int64 cost_cents = 3;
+
+  // Gateway-issued request IDs (galileo_request_id, UUIDv7) for every
+  // LLM call this agent run made. Joins against cost_events.request_id
+  // for per-agent-run cost attribution. Drift-2 resolution from the
+  // Week 3 inline-plan round (no workflow_id column on cost_events;
+  // correlation lives here on the agent-side instead).
+  repeated string cost_event_request_ids = 4;
 }
 
 // ToolCall names a tool + its JSON-encoded arguments.

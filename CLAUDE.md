@@ -152,6 +152,8 @@ When a CI pin moves (security update, ecosystem bump), the matching devcontainer
 | golang-jwt/jwt | `kernel/go.mod require` | (Go module dep) | `v5.3.1` |
 | pgx (Postgres driver) | `kernel/go.mod require` | (Go module dep) | `v5.9.2` |
 | google/uuid | `kernel/go.mod require` | (Go module dep) | `v1.6.0` |
+| stripe/stripe-go | `kernel/go.mod require` | (Go module dep) | `v85.1.0` |
+| go.opentelemetry.io/otel + sdk + exporters/otlp/otlptrace/otlptracegrpc | `kernel/go.mod require` | (Go module dep) | `v1.43.0` (SDK and exporter pinned together; semantically conventions package separately at `v1.26.0`) |
 
 The Rust pin policy is explicit: "latest" while no Rust code exists in the repo (no CI to align to). The Stage 2 PR that introduces Tauri adds both the CI Rust pin and the matching devcontainer pin in the same commit.
 
@@ -165,13 +167,38 @@ Go module deps (like `prometheus/client_golang`) are pinned in `kernel/go.mod`. 
 | --- | --- | --- | --- |
 | Postgres | `postgres:<major>.<minor>-alpine` | `17.9-alpine` | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` |
 | Temporal | `temporalio/auto-setup:<version>` | `1.29.6.1` | `temporal operator cluster health --address temporal:7233` |
-| LiteLLM | `ghcr.io/berriai/litellm:<version>` | `v1.83.14-stable.patch.3` | HTTP `GET /health/liveliness` on port 4000 |
+| LiteLLM | `ghcr.io/berriai/litellm:<version>` | `v1.83.14-stable.patch.3` | bash `</dev/tcp/127.0.0.1/4000` (wolfi-base image lacks curl/wget) |
+| Jaeger | `jaegertracing/all-in-one:<version>` | `2.18.0` | test-setup polls `http://127.0.0.1:16686/` (no in-container healthcheck) |
+| OTel collector | `otel/opentelemetry-collector-contrib:<version>` | `0.152.0` | test-setup polls `http://127.0.0.1:13133/` (image is `FROM scratch`; no shell) |
 
 LiteLLM's docs warn against using `main-stable` (their floating tag) — pin to specific stable releases for reproducibility. See PR-A of Week 3 for the precedent that committed the project to image-level pinning.
 
+Jaeger and OTel collector are *Stage 0's observability substrate* (substituted for Opik in PR-B; see [`docs/decisions/0004-observability-substrate.md`](docs/decisions/0004-observability-substrate.md)). Both run without docker healthchecks — Jaeger because we want symmetry with the OTel collector's distroless constraint; OTel collector because its `FROM scratch` image has no shell to run a docker `--health-cmd` against. The integration test setup polls each service's HTTP health endpoint with bounded retries (30 × 1s) and a clear failure message before running any test that depends on observability.
+
 ### Service naming convention
 
-Go cmd directories use short names (`gateway/`, `agent-runner/`, `cost-recon/`, `manifest-check/`). Their `serviceName` log/trace constants use the `galileo-` prefix (`galileo-gateway`, `galileo-agent-runner`, etc.). Directory = layout convention; `serviceName` = identity in logs/Opik/observability.
+Go cmd directories use short names (`gateway/`, `agent-runner/`, `cost-recon/`, `manifest-check/`). Their `serviceName` log/trace constants use the `galileo-` prefix (`galileo-gateway`, `galileo-agent-runner`, etc.). Directory = layout convention; `serviceName` = identity in logs/observability.
+
+### Size exception discipline
+
+The 600-line PR size guideline can be exceeded when a PR is a single coherent artifact whose components are inseparable. Each exception cites prior exception precedents and names which category it belongs to. New exception categories are deliberate and named; ad-hoc exceptions citing "similar to prior" without category framing are rejected.
+
+Categories observed so far:
+- **Calibration artifact** (PR #10): apparatus + mocks + self-validation tests, indivisible because the apparatus's correctness depends on its own validation tests.
+- **Runtime introduction** (PR #15 / PR-A): code + integration test + compose stack, indivisible because the code's correctness depends on runtime verification against external services.
+- **Plan-deviation with code** (PR-B): closeout + plan edits + ADR + the deviation code itself, indivisible because the deviation artifacts document a decision the code implements in the same review surface.
+
+Future exceptions either fit one of these categories (cite prior PR explicitly) or earn a new named category (structural argument required in the PR description).
+
+### Migration tooling
+
+Stage 0 uses an inline migration runner in `kernel/cmd/gateway/migrate.go` (reads embedded `migrations/*.sql` in order, applies inside transactions, tracks state in `schema_migrations` table). The inline runner is sufficient until any of the following structural triggers fire:
+
+- First need for a down-migration (rollback after a bad schema change in production).
+- First multi-environment migration drift (staging has migrations production doesn't, or vice versa).
+- First production deployment with PITR-based recovery requiring schema-version awareness during restore.
+
+When any trigger fires, evaluate `golang-migrate/migrate` or equivalent. Until then, the inline runner is the right shape — no premature dependency.
 
 ### Latest-1 language posture
 

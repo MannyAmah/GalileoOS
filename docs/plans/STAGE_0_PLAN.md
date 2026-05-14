@@ -204,7 +204,7 @@ Specific pre-registered failures Stage 0 must be prepared for:
 3. `docs/decisions/0003-mirage-layer-relocation.md` — ADR with metadata, supersession info, named reversal triggers (Mirage publishes Go SDK / native server mode / Galileo kernel acquires need to crawl heterogeneous backends itself).
 4. Edits to this file (`STAGE_0_PLAN.md`) reflecting the same: Week 2 scope revised, redline-4 row updated, Week 4 Onboarding Crew "if Mirage probe passed/failed" branching collapsed into per-agent choice.
 
-PR #10's apparatus is **retained as a general kernel-side connector verification harness** rather than a Mirage-specific probe. A follow-up PR renames `kernel/probe/mirage/` to reflect this generalized role (name decided with code context, not pre-committed in the plan).
+PR #10's apparatus is **retained as a general kernel-side connector verification harness** rather than a Mirage-specific probe. The follow-up rename moved `kernel/probe/mirage/` → `kernel/probe/connector/` and updated the package name accordingly; the apparatus contents are unchanged.
 
 **Calibration (Fri morning):** Before declaring Week 2 done, re-confirm that all four artifacts (closeout + canonical plan edits + ADR + STAGE_0_PLAN.md edits) are committed and internally consistent (each names the other; no stale "probe" references survive in any of them).
 

@@ -42,5 +42,5 @@ up:  ## Stage 0 placeholder — Appendix B docker-compose stack lands in Week 3.
 	@echo "Stage 0 Week 3 lands the docker-compose stack from docs/galileo_os_infrastructure_plan.md Appendix B."
 
 .PHONY: probe
-probe:  ## Run the Mirage probe apparatus tests (synthetic mocks; no Mirage import).
-	@cd kernel && go test -count=1 -v ./probe/mirage/...
+probe:  ## Run the Workspace connector probe apparatus tests (synthetic mocks; no real backend import).
+	@cd kernel && go test -count=1 -v ./probe/connector/...

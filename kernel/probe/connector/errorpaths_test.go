@@ -1,4 +1,4 @@
-package mirage
+package connector
 
 // Coverage-drill-down tests authored to lift apparatus.go above the
 // >90% line-coverage bar without resorting to a uniform "test

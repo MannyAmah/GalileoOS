@@ -663,7 +663,7 @@ All five paths converge on the same docker-compose service inventory documented 
 - One demo agent — a 'Hello' agent that takes a prompt, runs it through LiteLLM, returns the response as a Temporal workflow result, and shows up in Opik with full trace.
 - Cost meter wired end-to-end. Every LLM call is attributed to a tenant and a budget cap is enforced.
 - Documentation: a 30-minute 'install Galileo on your laptop' walkthrough that any senior engineer can complete.
-- Mirage layer-relocation closeout complete. Mirage is placed at Layer 5 (agent-side library, per-agent choice) rather than Layer 3 (kernel-side substrate). Decision documented in `docs/closeouts/CLOSEOUT_LAYER3_MIRAGE_RECONSIDERED.md` and `docs/decisions/0003-mirage-layer-relocation.md`. The Workspace-interface verification harness from PR #10 is retained as a general kernel-side connector probe, renamed to reflect its generalized role in a follow-up PR.
+- Mirage layer-relocation closeout complete. Mirage is placed at Layer 5 (agent-side library, per-agent choice) rather than Layer 3 (kernel-side substrate). Decision documented in `docs/closeouts/CLOSEOUT_LAYER3_MIRAGE_RECONSIDERED.md` and `docs/decisions/0003-mirage-layer-relocation.md`. The Workspace-interface verification harness from PR #10 is retained as a general kernel-side connector probe at `kernel/probe/connector/`.
 - Onboarding Crew foundations. A scaffolded Connector Agent + Crawler Agent runs against an internal test workspace and produces a manifest. Full crew shipped in Stage 1.
 
 #### Stage 0 gate

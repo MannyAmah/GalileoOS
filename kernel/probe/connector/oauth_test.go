@@ -1,4 +1,4 @@
-package mirage
+package connector
 
 import (
 	"context"

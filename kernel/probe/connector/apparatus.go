@@ -1,16 +1,26 @@
-// Package mirage implements the Stage 0 probe apparatus that measures
-// whether a Workspace backend satisfies the gate criteria specified in
-// docs/plans/STAGE_0_PLAN.md §Week 2. The apparatus is independently
-// validated against synthetic mock backends in *_test.go files in this
-// package; plan-PR #11 wires in a real Mirage-backed Workspace and runs
-// the same apparatus against it.
+// Package connector implements a general kernel-side verification
+// harness for any data backend implementing the Workspace interface.
+// The apparatus measures whether a Workspace implementation satisfies
+// named failure-mode criteria (cross-tenant isolation, cache p99
+// latency, content corruption, content staleness, byte-identical
+// snapshot/restore, dropped-file detection, listing accuracy, stat
+// freshness) and is independently validated against synthetic mock
+// backends in *_test.go files in this package.
+//
+// Originally written as the Stage 0 Mirage probe apparatus. After
+// PR #13 relocated Mirage to Layer 5 (agent-side) per ADR-0003, the
+// apparatus was retained as a general kernel-side connector probe.
+// Future Layer 3 substrate candidates (S3, Postgres, discrete MCP
+// wrappers, future Mirage if a Go SDK or native server ships per
+// ADR-0003 reversal triggers) implement the Workspace interface and
+// are measured by this apparatus.
 //
 // Calibration discipline (v7 rule 4): the apparatus must be verified
-// fault-finding on synthetic failure-injection inputs before it is used
-// to grade Mirage. If the apparatus passes a known-bad mock or fails a
-// known-good mock, it is invalid and Mirage adoption blocks pending
-// CLOSEOUT_PROBE_APPARATUS.md.
-package mirage
+// fault-finding on synthetic failure-injection inputs before it is
+// used to grade any candidate. If the apparatus passes a known-bad
+// mock or fails a known-good mock, it is invalid and adoption of the
+// candidate blocks pending a structural-finding closeout.
+package connector
 
 import (
 	"bytes"

@@ -7,8 +7,8 @@
 | PR | Adds to compose | Removes from compose |
 |---|---|---|
 | PR-A | `postgres:17.9-alpine`, `temporalio/auto-setup:1.29.6.1`, `ghcr.io/berriai/litellm:v1.83.14-stable.patch.3` | — |
-| PR-B (this) | `jaegertracing/all-in-one:2.18.0`, `otel/opentelemetry-collector-contrib:0.152.0`, LiteLLM `command:` + `volumes:` for generic_api callback config | — |
-| PR-C | `galileo-agent-runner`, `galileo-web` (as proper services rather than local processes) | — |
+| PR-B | `jaegertracing/all-in-one:2.18.0`, `otel/opentelemetry-collector-contrib:0.152.0`, LiteLLM `command:` + `volumes:` for generic_api callback config | — |
+| PR-C (this) | — (agent-runner and gateway run as local subprocesses in Stage 0; web runs via `npm run dev`) | — |
 
 ## What's deliberately NOT here
 

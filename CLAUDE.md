@@ -154,10 +154,14 @@ When a CI pin moves (security update, ecosystem bump), the matching devcontainer
 | google/uuid | `kernel/go.mod require` | (Go module dep) | `v1.6.0` |
 | stripe/stripe-go | `kernel/go.mod require` | (Go module dep) | `v85.1.0` |
 | go.opentelemetry.io/otel + sdk + exporters/otlp/otlptrace/otlptracegrpc | `kernel/go.mod require` | (Go module dep) | `v1.43.0` (SDK and exporter pinned together; semantically conventions package separately at `v1.26.0`) |
+| go.temporal.io/sdk + go.temporal.io/api | `kernel/go.mod require` | (Go module dep) | `v1.43.0` / `v1.62.11` (SDK and API package cross-pinned per the canonical samples-go go.mod) |
+| buf.build/protocolbuffers/go (protoc-gen-go plugin) | `schemas/buf.gen.yaml` | (BSR plugin) | `v1.36.11` |
 
 The Rust pin policy is explicit: "latest" while no Rust code exists in the repo (no CI to align to). The Stage 2 PR that introduces Tauri adds both the CI Rust pin and the matching devcontainer pin in the same commit.
 
 Go module deps (like `prometheus/client_golang`) are pinned in `kernel/go.mod`. The devcontainer doesn't install Go libraries separately — they're pulled by `go build` / `go test` from go.sum. The co-change discipline still applies to `kernel/go.mod` pins: bumping the version is a deliberate PR-level change, not a `go mod tidy` side effect.
+
+**Co-change applies to related packages within an upstream ecosystem.** Three examples to date: Temporal SDK + API (`go.temporal.io/sdk` + `go.temporal.io/api`), OTel SDK + exporters (`go.opentelemetry.io/otel` + its sub-packages), CI pin + devcontainer pin. When one ecosystem package bumps, the related packages from the same ecosystem move together in the same PR — drift between them produces silent breakage that the test surface doesn't always catch.
 
 ### Service image pins
 
@@ -199,6 +203,22 @@ Stage 0 uses an inline migration runner in `kernel/cmd/gateway/migrate.go` (read
 - First production deployment with PITR-based recovery requiring schema-version awareness during restore.
 
 When any trigger fires, evaluate `golang-migrate/migrate` or equivalent. Until then, the inline runner is the right shape — no premature dependency.
+
+### Generated code convention
+
+Protobuf-generated Go is committed to the repository under `kernel/gen/galileo/v1/`. Generation is a developer step (`make generate`), not a CI step. CI verifies that generated code matches the schemas by running `buf generate && git diff --exit-code kernel/gen/`; if a developer forgets to regenerate after a schema change, CI fails with a clear message naming the missed step.
+
+Plugin pin: `buf.build/protocolbuffers/go:v1.36.11` in `schemas/buf.gen.yaml`. Pin moves under the same discipline as Go-module deps — deliberate PR-level change, not a `buf generate` side effect.
+
+Reasons for the committed-generated convention: (1) reviewers see both the proto change and the generated diff in a single PR, making downstream API-surface changes visible at review time; (2) `go install ./...` works without `buf` installed on the consumer's machine; (3) CI build time stays minimal — no codegen runs in the hot path. When the protobuf ecosystem moves to a different generation model (e.g., a Go-native generator that doesn't need a separate binary), this convention can be revisited.
+
+### HTTP types as JSON schema
+
+The agent-runner and gateway use protobuf-generated Go types as their HTTP wire format. Standard `encoding/json.Marshal` reads the `json:"snake_case"` tags emitted by `protoc-gen-go`, so the HTTP wire format is snake_case throughout. We do **not** use `google.golang.org/protobuf/encoding/protojson` — that path emits camelCase per the protobuf JSON spec, and the cost of mixing two JSON conventions across one service boundary outweighs the marginal alignment with protobuf-canonical encoding.
+
+TypeScript wire types for `web/` are hand-written in `web/lib/api-types.ts` and tracked alongside proto changes. When a proto field changes, the TypeScript interface changes in the same PR. Reconsider generated TypeScript (e.g., via `bufbuild/es` plugin) when web complexity grows to 3+ entity types or when a second TypeScript client appears.
+
+Reconsider hand-written HTTP types and/or `protojson` if external API consumers expecting camelCase JavaScript conventions appear (Stage 1 trigger, parallel to the 402-vs-429 reconsideration trigger in `kernel/cmd/gateway/budget.go`).
 
 ### Latest-1 language posture
 

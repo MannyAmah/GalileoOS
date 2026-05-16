@@ -5,9 +5,33 @@ description = "Galileo OS Python agents — LangGraph / CrewAI / Agno workers."
 requires-python = ">=3.12"
 authors = [{ name = "Galileo OS contributors" }]
 license = { text = "Apache-2.0" }
-# Stage 0 has zero runtime deps; Stage 1 adds LangGraph / CrewAI / Agno.
-# Explicit empty list suppresses pip-audit's missing-dependencies warning.
-dependencies = []
+# PR-D (Week 4) introduces the Python runtime to the repo for real. Each
+# pin below is co-changed with the corresponding row in CLAUDE.md "Python
+# pin rows" — bumping any of these is a deliberate PR-level change, the
+# same discipline as kernel/go.mod pins.
+dependencies = [
+    "langgraph==1.2.*",
+    "mcp==1.27.*",
+    "psycopg[binary]==3.3.*",
+    "opentelemetry-sdk==1.41.*",
+    "opentelemetry-exporter-otlp==1.41.*",
+    "slack-sdk==3.41.*",
+    "google-api-python-client==2.196.*",
+    "cryptography==44.0.*",
+    "temporalio==1.27.*",
+    "pyyaml==6.0.*",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.*",
+    "pytest-asyncio==0.24.*",
+    "types-PyYAML==6.0.*",
+]
+
+[project.scripts]
+galileo-onboarding = "onboarding.cli:main"
+galileo-onboarding-worker = "onboarding.worker:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -26,3 +50,14 @@ python_version = "3.12"
 strict = true
 warn_unused_ignores = true
 warn_return_any = true
+
+[[tool.mypy.overrides]]
+# google-api-python-client and slack_sdk don't ship complete type stubs.
+# Narrow the strictness exception to those modules rather than relaxing
+# strict mode globally.
+module = ["googleapiclient.*", "google.oauth2.*", "google.auth.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["onboarding/tests"]

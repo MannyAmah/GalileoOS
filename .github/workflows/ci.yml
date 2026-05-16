@@ -116,6 +116,13 @@ jobs:
         run: go test -tags=gateway_integration -count=1 -v ./cmd/gateway/...
 
   python:
+    # PR-D (Week 4) introduces the Python runtime to the repo: 10 runtime
+    # deps in agents/pyproject.toml (langgraph, mcp, psycopg, opentelemetry-sdk,
+    # opentelemetry-exporter-otlp, slack-sdk, google-api-python-client,
+    # cryptography, temporalio, pyyaml) plus 3 dev deps for pytest. Install
+    # the project itself with its dev extras so mypy and pytest see the
+    # real type stubs and the modules they import, then run the lint/type/
+    # security/test matrix.
     name: python
     runs-on: ubuntu-24.04
     defaults:
@@ -128,20 +135,32 @@ jobs:
           python-version: "3.12"
       - name: install tools
         run: pip install "ruff==0.6.*" "mypy==1.11.*" "black==26.*" "pip-audit==2.7.*"
+      - name: install project + dev deps
+        # Editable install picks up the project's own modules for mypy's
+        # import resolver and pytest's collection. The dev extras bring
+        # in pytest + pytest-asyncio + types-PyYAML.
+        run: pip install -e ".[dev]"
       - name: ruff
         run: ruff check .
       - name: black --check
         run: black --check .
       - name: mypy
         run: mypy --strict onboarding hello
+      - name: pytest
+        # PR-D adds onboarding/tests/ — deterministic, offline. Tests
+        # that hit real upstreams (github MCP subprocess, real slack
+        # auth, real gdrive auth) are gated behind GALILEO_ONBOARDING_*
+        # env vars per the install_walkthrough.md cold-engineer flow;
+        # the default test pass covers credentials.py roundtrip, GCM
+        # AAD binding, nonce-uniqueness, and SourceKind dispatch.
+        run: pytest -v onboarding/tests
       - name: pip-audit
         # Scoped to agents/'s declared project dependencies via the
         # positional project_path argument. Auditing the runner's full
         # installed env (the default) produces alerts on pip and the
         # install tooling that no contributor can act on from this repo;
-        # that's noise the discipline rejects. Scoped audit is a no-op
-        # pass today (zero runtime deps) and activates meaningfully when
-        # Stage 1 adds LangGraph / CrewAI / Agno. See
+        # that's noise the discipline rejects. PR-D's 10 runtime deps
+        # are now the meaningful audit surface. See
         # docs/solutions/SOLUTION_CI_EXPANSION_FINDINGS.md.
         run: pip-audit --strict .
 

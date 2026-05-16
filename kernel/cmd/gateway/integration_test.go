@@ -90,8 +90,15 @@ func setupEnv(t *testing.T) *testEnv {
 	}
 
 	tenantID := uuid.Must(uuid.NewV7()).String()
+	// Schema-qualified per CLAUDE.md convention. Required after PR-E
+	// migration 0005_brain.sql's ALTER DATABASE puts ag_catalog first
+	// in search_path: unqualified `INSERT INTO tenants` could otherwise
+	// resolve to a different schema than the FK target
+	// (public.tenants) the brain_embeddings constraint references.
+	// Iteration 3 surfaced this as a FK violation in
+	// TestBrainEmbeddingsRoundtrip.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO tenants (tenant_id, monthly_budget_cents) VALUES ($1, $2)`,
+		`INSERT INTO public.tenants (tenant_id, monthly_budget_cents) VALUES ($1, $2)`,
 		tenantID, int64(99999),
 	); err != nil {
 		pool.Close()
@@ -304,7 +311,7 @@ func TestBudgetCapDeniesWith402(t *testing.T) {
 	// Insert one cost_events row that equals the tenant's budget so the
 	// next request sums to spend == cap (deny is >= cap).
 	_, err := env.pool.Exec(ctx, `
-		INSERT INTO cost_events (request_id, tenant_id, event_ts, cost_cents, provider, model)
+		INSERT INTO public.cost_events (request_id, tenant_id, event_ts, cost_cents, provider, model)
 		VALUES ($1, $2, now(), 99999, 'test', 'test-model')
 	`, uuid.Must(uuid.NewV7()).String(), env.tenantID)
 	if err != nil {
@@ -366,7 +373,7 @@ func TestCostEventsWebhookRoundtrip(t *testing.T) {
 	var costCents int64
 	var model string
 	err = env.pool.QueryRow(context.Background(),
-		`SELECT cost_cents, model FROM cost_events WHERE request_id = $1`, requestID,
+		`SELECT cost_cents, model FROM public.cost_events WHERE request_id = $1`, requestID,
 	).Scan(&costCents, &model)
 	if err != nil {
 		t.Fatalf("cost_events row not found: %v", err)
@@ -418,7 +425,7 @@ func TestCostEventsWebhookIdempotency(t *testing.T) {
 
 	var count int
 	err := env.pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM cost_events WHERE request_id = $1`, requestID,
+		`SELECT COUNT(*) FROM public.cost_events WHERE request_id = $1`, requestID,
 	).Scan(&count)
 	if err != nil {
 		t.Fatalf("count cost_events: %v", err)
@@ -477,7 +484,7 @@ func TestBrainEmbeddingsRoundtrip(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		if _, err := env.pool.Exec(ctx, `
-			INSERT INTO brain_embeddings
+			INSERT INTO public.brain_embeddings
 				(tenant_id, source_kind, source_uri, chunk_text, embedding, metadata)
 			VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb)
 		`, env.tenantID, "test", fmt.Sprintf("uri-%d", i), "chunk", vecLit, `{}`); err != nil {
@@ -488,7 +495,7 @@ func TestBrainEmbeddingsRoundtrip(t *testing.T) {
 	var distance float64
 	err := env.pool.QueryRow(ctx, `
 		SELECT (embedding <=> $1::vector) AS distance
-		FROM brain_embeddings
+		FROM public.brain_embeddings
 		WHERE tenant_id = $2
 		ORDER BY distance
 		LIMIT 1
@@ -502,7 +509,7 @@ func TestBrainEmbeddingsRoundtrip(t *testing.T) {
 
 	// Clean up this test's rows so it doesn't leak across runs.
 	_, _ = env.pool.Exec(ctx,
-		`DELETE FROM brain_embeddings WHERE tenant_id = $1`, env.tenantID)
+		`DELETE FROM public.brain_embeddings WHERE tenant_id = $1`, env.tenantID)
 }
 
 // TestBrainGraphCreated (PR-E): the brain_graph AGE graph exists after

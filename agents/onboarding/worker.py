@@ -43,17 +43,23 @@ logger = logging.getLogger(__name__)
 def _require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
-        sys.stderr.write(f"galileo-onboarding-worker: missing required env var {name}\n")
+        sys.stderr.write(
+            f"galileo-onboarding-worker: missing required env var {name}\n"
+        )
         sys.exit(2)
     return value
 
 
 async def _run() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     hostport = os.environ.get("GALILEO_TEMPORAL_HOSTPORT", "localhost:7233")
     namespace = os.environ.get("GALILEO_TEMPORAL_NAMESPACE", "default")
-    _require_env("GALILEO_GATEWAY_DATABASE_URL")  # validate at startup, used inside activities
+    _require_env(
+        "GALILEO_GATEWAY_DATABASE_URL"
+    )  # validate at startup, used inside activities
 
     client = await Client.connect(hostport, namespace=namespace)
     worker = Worker(
@@ -68,7 +74,9 @@ async def _run() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
-    logger.info("galileo-onboarding-worker ready hostport=%s namespace=%s", hostport, namespace)
+    logger.info(
+        "galileo-onboarding-worker ready hostport=%s namespace=%s", hostport, namespace
+    )
 
     async with worker:
         await stop.wait()

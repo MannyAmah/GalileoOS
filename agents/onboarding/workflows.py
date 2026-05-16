@@ -41,7 +41,9 @@ class ConnectorWorkflow:
     """
 
     @workflow.run
-    async def run(self, tenant_id: str, source_kinds: list[str], database_url: str) -> None:
+    async def run(
+        self, tenant_id: str, source_kinds: list[str], database_url: str
+    ) -> None:
         for kind in source_kinds:
             await workflow.execute_activity(
                 verify_source_auth,
@@ -60,7 +62,9 @@ class CrawlerWorkflow:
     """
 
     @workflow.run
-    async def run(self, tenant_id: str, source_kinds: list[str], database_url: str) -> None:
+    async def run(
+        self, tenant_id: str, source_kinds: list[str], database_url: str
+    ) -> None:
         for kind in source_kinds:
             await workflow.execute_activity(
                 crawl_source,

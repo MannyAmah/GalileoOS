@@ -29,14 +29,14 @@ import time
 from typing import Any, Final
 
 import psycopg
-from googleapiclient.discovery import build as google_build  # type: ignore[import-untyped]
-from google.oauth2 import service_account  # type: ignore[import-untyped]
+from googleapiclient.discovery import build as google_build
+from google.oauth2 import service_account
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from slack_sdk import WebClient
 from temporalio import activity
 
-from .connector import _aad, _load_credential
+from .connector import _load_credential
 from .credentials import CredentialStore
 from .sources import SourceKind
 
@@ -88,19 +88,27 @@ async def _crawl_github(pat: str) -> list[dict[str, Any]]:
                 )
             result = await session.call_tool(target, arguments={"query": "user:@me"})
             for block in result.content:
-                if getattr(block, "type", None) != "text":
+                # Narrow the union by attribute existence; mcp's content
+                # blocks are TextContent | ImageContent | ... and only
+                # TextContent carries a .text field.
+                text = getattr(block, "text", None)
+                if not isinstance(text, str):
                     continue
                 try:
-                    payload = json.loads(block.text)
+                    payload = json.loads(text)
                 except json.JSONDecodeError:
                     continue
-                for repo in payload.get("items", payload if isinstance(payload, list) else []):
+                for repo in payload.get(
+                    "items", payload if isinstance(payload, list) else []
+                ):
                     rows.append(
                         {
                             "path": repo.get("full_name", ""),
                             "size_bytes": int(repo.get("size", 0)) * 1024,
                             "content_type": "application/vnd.github.repo",
-                            "last_modified_unix": _parse_iso_unix(repo.get("updated_at")),
+                            "last_modified_unix": _parse_iso_unix(
+                                repo.get("updated_at")
+                            ),
                         }
                     )
                     if len(rows) >= _MAX_DOCS_PER_SOURCE:
@@ -116,7 +124,8 @@ def _crawl_slack(bot_token: str) -> list[dict[str, Any]]:
         response = client.conversations_list(
             cursor=cursor, limit=200, types="public_channel,private_channel"
         )
-        for channel in response.get("channels", []):
+        channels: list[dict[str, Any]] = response.get("channels", []) or []
+        for channel in channels:
             rows.append(
                 {
                     "path": channel.get("id", ""),
@@ -127,7 +136,8 @@ def _crawl_slack(bot_token: str) -> list[dict[str, Any]]:
             )
             if len(rows) >= _MAX_DOCS_PER_SOURCE:
                 return rows
-        cursor = response.get("response_metadata", {}).get("next_cursor") or None
+        metadata: dict[str, Any] = response.get("response_metadata") or {}
+        cursor = metadata.get("next_cursor") or None
         if not cursor:
             break
     return rows
@@ -135,7 +145,10 @@ def _crawl_slack(bot_token: str) -> list[dict[str, Any]]:
 
 def _crawl_gdrive(service_account_json: str) -> list[dict[str, Any]]:
     info = json.loads(service_account_json)
-    creds = service_account.Credentials.from_service_account_info(info, scopes=_GDRIVE_SCOPES)
+    # See connector.py:_verify_gdrive for the rationale on this silence.
+    creds = service_account.Credentials.from_service_account_info(  # type: ignore[no-untyped-call]
+        info, scopes=_GDRIVE_SCOPES
+    )
     service = google_build("drive", "v3", credentials=creds, cache_discovery=False)
     rows: list[dict[str, Any]] = []
     page_token: str | None = None
@@ -193,7 +206,9 @@ async def crawl_source(tenant_id: str, source_kind: str, database_url: str) -> N
 
     with psycopg.connect(database_url) as conn:
         plaintext = _load_credential(conn, store, tenant_id, kind)
-        _upsert_manifest_status(conn, tenant_id, kind, "in_progress", manifest_json=None)
+        _upsert_manifest_status(
+            conn, tenant_id, kind, "in_progress", manifest_json=None
+        )
         conn.commit()
 
     activity.logger.info("crawl_source start tenant=%s kind=%s", tenant_id, kind.value)
@@ -214,10 +229,15 @@ async def crawl_source(tenant_id: str, source_kind: str, database_url: str) -> N
                 f"crawl exceeded wall-clock cap ({_MAX_WALL_CLOCK_SECONDS}s)"
             )
         with psycopg.connect(database_url) as conn:
-            _upsert_manifest_status(conn, tenant_id, kind, "completed", manifest_json=rows)
+            _upsert_manifest_status(
+                conn, tenant_id, kind, "completed", manifest_json=rows
+            )
             conn.commit()
         activity.logger.info(
-            "crawl_source ok tenant=%s kind=%s docs=%d", tenant_id, kind.value, len(rows)
+            "crawl_source ok tenant=%s kind=%s docs=%d",
+            tenant_id,
+            kind.value,
+            len(rows),
         )
     except Exception:
         with psycopg.connect(database_url) as conn:

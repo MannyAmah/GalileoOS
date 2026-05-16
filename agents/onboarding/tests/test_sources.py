@@ -26,7 +26,9 @@ def test_unknown_source_kind_rejected() -> None:
 
 
 def test_source_config_dataclass_is_frozen() -> None:
-    cfg = SourceConfig(kind=SourceKind.GITHUB, credential=GitHubCredential(pat="ghp_xxx"))
+    cfg = SourceConfig(
+        kind=SourceKind.GITHUB, credential=GitHubCredential(pat="ghp_xxx")
+    )
     with pytest.raises(Exception):
         cfg.kind = SourceKind.SLACK  # type: ignore[misc]
 

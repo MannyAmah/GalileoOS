@@ -58,7 +58,9 @@ def _load_ikm(dev_key_path: str) -> bytes:
 
 
 def _derive_aes_key(ikm: bytes) -> bytes:
-    hkdf = HKDF(algorithm=hashes.SHA256(), length=_KEY_BYTES, salt=_HKDF_SALT, info=_HKDF_INFO)
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(), length=_KEY_BYTES, salt=_HKDF_SALT, info=_HKDF_INFO
+    )
     return hkdf.derive(ikm)
 
 
@@ -72,8 +74,10 @@ class CredentialStore:
     """
 
     def __init__(self, *, dev_key_path: str | None = None) -> None:
-        path = dev_key_path or os.environ.get(
-            "GALILEO_ONBOARDING_DEV_KEY_PATH", _DEFAULT_DEV_KEY_PATH
+        path = (
+            dev_key_path
+            or os.environ.get("GALILEO_ONBOARDING_DEV_KEY_PATH")
+            or _DEFAULT_DEV_KEY_PATH
         )
         ikm = _load_ikm(path)
         self._aead = AESGCM(_derive_aes_key(ikm))

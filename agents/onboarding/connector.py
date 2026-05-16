@@ -28,8 +28,8 @@ import logging
 from typing import Final
 
 import psycopg
-from googleapiclient.discovery import build as google_build  # type: ignore[import-untyped]
-from google.oauth2 import service_account  # type: ignore[import-untyped]
+from googleapiclient.discovery import build as google_build
+from google.oauth2 import service_account
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from slack_sdk import WebClient
@@ -111,15 +111,26 @@ def _verify_slack(bot_token: str) -> None:
     try:
         response = client.auth_test()
     except SlackApiError as exc:
-        raise AuthVerificationError(f"slack auth.test failed: {exc.response.get('error')}") from exc
+        raise AuthVerificationError(
+            f"slack auth.test failed: {exc.response.get('error')}"
+        ) from exc
     if not response.get("ok"):
-        raise AuthVerificationError(f"slack auth.test returned not-ok: {response.data}")
+        raise AuthVerificationError(
+            f"slack auth.test returned not-ok: {response.data!r}"
+        )
 
 
 def _verify_gdrive(service_account_json: str) -> None:
     try:
         info = json.loads(service_account_json)
-        creds = service_account.Credentials.from_service_account_info(info, scopes=_GDRIVE_SCOPES)
+        # google.oauth2 declares the type but the function's return is Any;
+        # ``no-untyped-call`` fires at the call site in our strictly-typed
+        # code rather than inside google.oauth2. Scope the silence to the
+        # exact line — the override in pyproject.toml relaxes the third-
+        # party boundary, but mypy's strict caller-side check still fires.
+        creds = service_account.Credentials.from_service_account_info(  # type: ignore[no-untyped-call]
+            info, scopes=_GDRIVE_SCOPES
+        )
         service = google_build("drive", "v3", credentials=creds, cache_discovery=False)
         service.about().get(fields="user").execute()
     except Exception as exc:
@@ -127,7 +138,9 @@ def _verify_gdrive(service_account_json: str) -> None:
 
 
 @activity.defn
-async def verify_source_auth(tenant_id: str, source_kind: str, database_url: str) -> None:
+async def verify_source_auth(
+    tenant_id: str, source_kind: str, database_url: str
+) -> None:
     """Activity: load and verify a single source's credentials.
 
     Reads the encrypted credential from Postgres, decrypts it locally
@@ -143,7 +156,9 @@ async def verify_source_auth(tenant_id: str, source_kind: str, database_url: str
     with psycopg.connect(database_url) as conn:
         plaintext = _load_credential(conn, store, tenant_id, kind)
 
-    activity.logger.info("verify_source_auth start tenant=%s kind=%s", tenant_id, kind.value)
+    activity.logger.info(
+        "verify_source_auth start tenant=%s kind=%s", tenant_id, kind.value
+    )
     if kind is SourceKind.GITHUB:
         await _verify_github(plaintext.decode())
     elif kind is SourceKind.SLACK:
@@ -155,4 +170,6 @@ async def verify_source_auth(tenant_id: str, source_kind: str, database_url: str
         from typing import assert_never
 
         assert_never(kind)
-    activity.logger.info("verify_source_auth ok tenant=%s kind=%s", tenant_id, kind.value)
+    activity.logger.info(
+        "verify_source_auth ok tenant=%s kind=%s", tenant_id, kind.value
+    )

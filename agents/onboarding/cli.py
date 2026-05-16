@@ -58,7 +58,9 @@ def _load_config(path: Path) -> tuple[str, list[tuple[SourceKind, Path]]]:
         kind = SourceKind(entry["kind"])
         cred_path = Path(entry["credential_path"]).expanduser()
         if not cred_path.is_file():
-            raise FileNotFoundError(f"{path}: credential_path {cred_path} does not exist")
+            raise FileNotFoundError(
+                f"{path}: credential_path {cred_path} does not exist"
+            )
         entries.append((kind, cred_path))
     if not entries:
         raise ValueError(f"{path}: sources list is empty")
@@ -96,7 +98,9 @@ def _persist_credentials(
     return persisted
 
 
-async def _trigger_workflows(tenant_id: str, source_kinds: list[str], database_url: str) -> None:
+async def _trigger_workflows(
+    tenant_id: str, source_kinds: list[str], database_url: str
+) -> None:
     hostport = os.environ.get("GALILEO_TEMPORAL_HOSTPORT", "localhost:7233")
     namespace = os.environ.get("GALILEO_TEMPORAL_NAMESPACE", "default")
     client = await Client.connect(hostport, namespace=namespace)
@@ -128,7 +132,9 @@ def _parse_args(argv: list[str]) -> Any:
 
 
 def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
     database_url = os.environ.get("GALILEO_GATEWAY_DATABASE_URL")

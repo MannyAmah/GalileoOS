@@ -167,7 +167,7 @@ Python runtime deps (introduced in PR-D / Week 4) pin in `agents/pyproject.toml`
 | opentelemetry-sdk + opentelemetry-exporter-otlp | `agents/pyproject.toml dependencies` | `1.41.*` | SDK + OTLP exporter cross-pinned, same ecosystem-pair discipline as the Go OTel pair. Compat with the `otel-collector:0.152.0` substrate from PR-B. |
 | slack-sdk | `agents/pyproject.toml dependencies` | `3.41.*` | Vendor-maintained Slack Python SDK; replaces the deprecated `@modelcontextprotocol/server-slack` per ADR-0005. |
 | google-api-python-client | `agents/pyproject.toml dependencies` | `2.196.*` | Vendor-maintained Google Drive SDK; replaces the deprecated `@modelcontextprotocol/server-gdrive` per ADR-0005. |
-| cryptography | `agents/pyproject.toml dependencies` | `44.0.*` | Explicit pin even though transitively available via `mcp` → `pyjwt[crypto]`; the credentials store's HKDF-SHA256 + AES-256-GCM path must not depend on transitive availability. |
+| cryptography | `agents/pyproject.toml dependencies` | `46.0.*` | Explicit pin even though transitively available via `mcp` → `pyjwt[crypto]`; the credentials store's HKDF-SHA256 + AES-256-GCM path must not depend on transitive availability. Initial PR-D draft was `44.0.*`; bumped to `46.0.*` during PR-D's `pip-audit` to clear GHSA-r6ph-v2qm-q3c2 and GHSA-m959-cc7f-wv43. |
 | temporalio | `agents/pyproject.toml dependencies` | `1.27.*` | Python Temporal SDK for the `galileo-onboarding-crew` worker. |
 | pyyaml | `agents/pyproject.toml dependencies` | `6.0.*` | CLI YAML config parsing. `types-PyYAML` pinned in `[project.optional-dependencies] dev` for mypy strictness. |
 | pytest + pytest-asyncio | `agents/pyproject.toml [dev]` | `8.*` / `0.24.*` | Test runner; async-mode auto. |

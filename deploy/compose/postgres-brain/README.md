@@ -15,7 +15,7 @@ Two version pins live in this directory's Dockerfile:
 | Pin | Current | Source of truth |
 |---|---|---|
 | Upstream base | `apache/age:release_PG17_1.6.0` | Docker Hub `apache/age` tag |
-| pgvector apt | `0.8.2-1.pgdg12+1` | PGDG `bookworm-pgdg` Packages index |
+| pgvector apt | unpinned — latest from image's apt index at build time | PGDG repo configured by `postgres:17` base; resolved per build (PR-E first iteration: pinned to `0.8.2-1.pgdg12+1` failed because the apache/age image's apt index lagged the PGDG public snapshot read at planning time) |
 
 Both pins co-change with the matching row in `CLAUDE.md` "Service image pins" in the same PR. Drift between the Dockerfile pin and the CLAUDE.md row is the same shape of mistake as the CI ↔ devcontainer co-change drift documented in CLAUDE.md "Tool version pins."
 

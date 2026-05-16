@@ -29,10 +29,10 @@ func verifyExtensions(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	if count != 2 {
 		return fmt.Errorf(
-			"brain extensions missing (expected 2 of vector + age, got %d). "+
-				"Likely cause: the extension was manually dropped, or the postgres-brain "+
-				"image isn't in use. Re-run migrations or CREATE EXTENSION manually; see "+
-				"deploy/compose/postgres-brain/README.md.",
+			"brain extensions missing (expected 2 of vector + age, got %d) — "+
+				"likely cause: extension was manually dropped, or the postgres-brain "+
+				"image isn't in use; re-run migrations or CREATE EXTENSION manually, "+
+				"see deploy/compose/postgres-brain/README.md",
 			count,
 		)
 	}

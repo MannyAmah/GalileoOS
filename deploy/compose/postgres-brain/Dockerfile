@@ -17,11 +17,19 @@
 
 FROM apache/age:release_PG17_1.6.0
 
-# pgvector 0.8.2 from PGDG. Explicit version pin so CI rebuilds are
-# reproducible — debian-bookworm's PGDG index updates do not silently
-# shift the version installed. Verified 2026-05-16 via
-# https://apt.postgresql.org/pub/repos/apt/dists/bookworm-pgdg/main/binary-amd64/Packages.gz
+# pgvector via apt. Pin posture for PR-E: install latest from the
+# apt index available inside the apache/age:release_PG17_1.6.0 image.
+# An exact-version pin (e.g., `0.8.2-1.pgdg12+1`) was tried first and
+# rejected because the version available in this image's apt index
+# can lag or lead the PGDG bookworm-pgdg snapshot we read at
+# planning time. The looser-pin posture trades reproducibility for
+# build resilience.
+#
+# When the GHCR-publishing trigger fires (CLAUDE.md "Custom Galileo-
+# built images" → ≥3 custom images), we shift to a build-once-then-
+# tag posture where the exact installed version is captured in the
+# published tag.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       postgresql-17-pgvector=0.8.2-1.pgdg12+1 \
+       postgresql-17-pgvector \
     && rm -rf /var/lib/apt/lists/*

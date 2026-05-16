@@ -184,7 +184,7 @@ Go module deps (like `prometheus/client_golang`) are pinned in `kernel/go.mod`. 
 
 | Service | Image | Current pin | Health check |
 | --- | --- | --- | --- |
-| Postgres (Stage 1+) | `deploy/compose/postgres-brain/Dockerfile` (custom build) | base: `apache/age:release_PG17_1.6.0`; pgvector apt: `postgresql-17-pgvector=0.8.2-1.pgdg12+1` | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` |
+| Postgres (Stage 1+) | `deploy/compose/postgres-brain/Dockerfile` (custom build) | base: `apache/age:release_PG17_1.6.0`; pgvector apt: latest from image's apt index (no exact-version pin; trade-off documented in Dockerfile + first PR-E CI iteration finding) | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` |
 | ~~Postgres (Stage 0)~~ | ~~`postgres:<major>.<minor>-alpine`~~ | ~~`17.9-alpine`~~ — superseded by `postgres-brain` in PR-E per ADR-0006 (Stage 1 Brain substrate adds pgvector + AGE) | — |
 | Temporal | `temporalio/auto-setup:<version>` | `1.29.6.1` | `temporal operator cluster health --address temporal:7233` |
 | LiteLLM | `ghcr.io/berriai/litellm:<version>` | `v1.83.14-stable.patch.3` | bash `</dev/tcp/127.0.0.1/4000` (wolfi-base image lacks curl/wget) |

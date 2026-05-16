@@ -63,7 +63,7 @@ func (r *TenantResolver) Resolve(ctx context.Context, pubKeyPath, raw string) (c
 
 	var budget int64
 	row := r.pool.QueryRow(ctx,
-		`SELECT monthly_budget_cents FROM tenants WHERE tenant_id = $1`,
+		`SELECT monthly_budget_cents FROM public.tenants WHERE tenant_id = $1`,
 		claims.TenantID,
 	)
 	if err := row.Scan(&budget); err != nil {

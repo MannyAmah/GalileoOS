@@ -184,12 +184,21 @@ Go module deps (like `prometheus/client_golang`) are pinned in `kernel/go.mod`. 
 
 | Service | Image | Current pin | Health check |
 | --- | --- | --- | --- |
-| Postgres | `postgres:<major>.<minor>-alpine` | `17.9-alpine` | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` |
+| Postgres (Stage 1+) | `deploy/compose/postgres-brain/Dockerfile` (custom build) | base: `apache/age:release_PG17_1.6.0`; pgvector apt: latest from image's apt index (no exact-version pin; trade-off documented in Dockerfile + first PR-E CI iteration finding) | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` |
+| ~~Postgres (Stage 0)~~ | ~~`postgres:<major>.<minor>-alpine`~~ | ~~`17.9-alpine`~~ — superseded by `postgres-brain` in PR-E per ADR-0006 (Stage 1 Brain substrate adds pgvector + AGE) | — |
 | Temporal | `temporalio/auto-setup:<version>` | `1.29.6.1` | `temporal operator cluster health --address temporal:7233` |
 | LiteLLM | `ghcr.io/berriai/litellm:<version>` | `v1.83.14-stable.patch.3` | bash `</dev/tcp/127.0.0.1/4000` (wolfi-base image lacks curl/wget) |
 | Jaeger | `jaegertracing/all-in-one:<version>` | `2.18.0` | test-setup polls `http://127.0.0.1:16686/` (no in-container healthcheck) |
 | OTel collector | `otel/opentelemetry-collector-contrib:<version>` | `0.152.0` | test-setup polls `http://127.0.0.1:13133/` (image is `FROM scratch`; no shell) |
 | GitHub MCP server | `ghcr.io/github/github-mcp-server:<version>` | `v1.0.4` | Stage 0 Onboarding Crew github connector (PR-D / ADR-0005). Invoked as `docker run -i --rm --init` subprocess by `agents/onboarding/connector.py`; no long-running container, no docker healthcheck. The `--init` flag is required to forward SIGTERM cleanly during Temporal workflow cancellation. |
+
+**Custom Galileo-built images.** Two as of Stage 1 / PR-E: `deploy/compose/otel-wrapper/` (from PR-B; CI-only wrapper for the OTel collector's CMD override + config mount) and `deploy/compose/postgres-brain/` (from PR-E; pgvector + AGE on PostgreSQL 17). Both built in CI per the Fork B pattern, not published to GHCR. **Reconsideration triggers** (named-N threshold pattern):
+- **GHCR publishing:** promote to GHCR publishing when ≥3 custom images exist in `deploy/compose/`. The image-build-time cost stays manageable at 2 images; at 3+ the CI rebuild surface starts to dominate.
+- **Helper-script extraction:** extract `postgres-brain` (or any other shared) setup to `.github/scripts/setup-<service>.sh` when ≥3 CI jobs need the same setup. PR-E uses inline-in-YAML duplication across two jobs (`gateway-integration` + `agent-runner-integration`) per the locality-wins-over-DRY argument for small N; a third job earns the extraction.
+
+**postgres-brain upstream-version reconsideration triggers** (per ADR-0006):
+- When `apache/age:release_PG17_1.7.0` publishes on Docker Hub (GitHub tag `PG17/v1.7.0-rc0` exists from 2026-02-11; Docker Hub publication pending), evaluate upgrade in a separate PR per `deploy/compose/postgres-brain/README.md` procedure.
+- When PGDG publishes a newer `postgresql-17-pgvector` point release (currently pinned at `0.8.2-1.pgdg12+1`), evaluate upgrade in the same PR shape.
 
 LiteLLM's docs warn against using `main-stable` (their floating tag) — pin to specific stable releases for reproducibility. See PR-A of Week 3 for the precedent that committed the project to image-level pinning.
 
@@ -205,10 +214,14 @@ The 600-line PR size guideline can be exceeded when a PR is a single coherent ar
 
 Categories observed so far:
 - **Calibration artifact** (PR #10): apparatus + mocks + self-validation tests, indivisible because the apparatus's correctness depends on its own validation tests.
-- **Runtime introduction** (PR #15 / PR-A): code + integration test + compose stack, indivisible because the code's correctness depends on runtime verification against external services.
+- **Runtime introduction** (PR #15 / PR-A, PR-E): code + integration test + compose stack, indivisible because the code's correctness depends on runtime verification against external services. **Second instance of this category in PR-E** (custom postgres-brain image + 0005_brain.sql migration + Brain integration tests + Fork B CI pattern; ADR-0006). Recurring shape: the first introduction of a new runtime artifact (compose service, custom image, new external service) bundles the artifact with its first-pass integration test surface in one indivisible PR.
 - **Plan-deviation with code** (PR #17 / PR-B, PR-D): closeout + plan edits + ADR + the deviation code itself, indivisible because the deviation artifacts document a decision the code implements in the same review surface. **Second instance of this category in PR-D** (per-source MCP dispatch reconsidered; ADR-0005). Recurring shape: an inline-plan discovery pass surfaces a structural mismatch large enough to need the four-part deviation template, and the artifacts are inseparable from the code that implements them.
 
 Future exceptions either fit one of these categories (cite prior PR explicitly) or earn a new named category (structural argument required in the PR description).
+
+### Schema-qualification convention (Stage 1+)
+
+All Galileo-owned tables and queries reference schemas explicitly (`public.tenants` not `tenants`; `public.cost_events`, `public.brain_embeddings`, `public.tenant_credentials`, etc.). Prevents collision with `ag_catalog` (in the default search_path post-PR-E per ADR-0006's `ALTER DATABASE` in `0005_brain.sql`) or any future schemas added by upstream extensions. Applies to migrations, integration tests, and runtime queries. CI doesn't lint for this yet — it's a discipline contributors maintain by review.
 
 ### Migration tooling
 

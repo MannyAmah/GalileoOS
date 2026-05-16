@@ -99,15 +99,15 @@ func setupAgentEnv(t *testing.T) *agentEnv {
 	require.NoError(t, err)
 	tenantID := uuid.Must(uuid.NewV7()).String()
 	_, err = pool.Exec(context.Background(),
-		`INSERT INTO tenants (tenant_id, monthly_budget_cents) VALUES ($1, $2)`,
+		`INSERT INTO public.tenants (tenant_id, monthly_budget_cents) VALUES ($1, $2)`,
 		tenantID, testTenantBudget,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, _ = pool.Exec(ctx, `DELETE FROM cost_events WHERE tenant_id = $1`, tenantID)
-		_, _ = pool.Exec(ctx, `DELETE FROM tenants WHERE tenant_id = $1`, tenantID)
+		_, _ = pool.Exec(ctx, `DELETE FROM public.cost_events WHERE tenant_id = $1`, tenantID)
+		_, _ = pool.Exec(ctx, `DELETE FROM public.tenants WHERE tenant_id = $1`, tenantID)
 		pool.Close()
 	})
 

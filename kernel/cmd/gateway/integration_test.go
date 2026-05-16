@@ -90,8 +90,15 @@ func setupEnv(t *testing.T) *testEnv {
 	}
 
 	tenantID := uuid.Must(uuid.NewV7()).String()
+	// Schema-qualified per CLAUDE.md convention. Required after PR-E
+	// migration 0005_brain.sql's ALTER DATABASE puts ag_catalog first
+	// in search_path: unqualified `INSERT INTO tenants` could otherwise
+	// resolve to a different schema than the FK target
+	// (public.tenants) the brain_embeddings constraint references.
+	// Iteration 3 surfaced this as a FK violation in
+	// TestBrainEmbeddingsRoundtrip.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO tenants (tenant_id, monthly_budget_cents) VALUES ($1, $2)`,
+		`INSERT INTO public.tenants (tenant_id, monthly_budget_cents) VALUES ($1, $2)`,
 		tenantID, int64(99999),
 	); err != nil {
 		pool.Close()
@@ -127,10 +134,18 @@ func setupEnv(t *testing.T) *testEnv {
 		srv.Close()
 		// Don't drop tables — parallel tests in the same run share the
 		// schema, keyed on unique tenantIDs. Clean up this run's rows.
+		// Schema-qualified references per CLAUDE.md convention (public.*)
+		// — required because PR-E's ALTER DATABASE puts ag_catalog first
+		// in search_path, and we don't want any future ag_catalog table
+		// to shadow these names.
+		// AGE graph cleanup is deferred to component [C] (Org-Mapper)
+		// where the first persistent vertex/edge writes land; PR-E
+		// doesn't write to brain_graph.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, _ = pool.Exec(ctx, `DELETE FROM cost_events WHERE tenant_id = $1`, tenantID)
-		_, _ = pool.Exec(ctx, `DELETE FROM tenants WHERE tenant_id = $1`, tenantID)
+		_, _ = pool.Exec(ctx, `DELETE FROM public.brain_embeddings WHERE tenant_id = $1`, tenantID)
+		_, _ = pool.Exec(ctx, `DELETE FROM public.cost_events WHERE tenant_id = $1`, tenantID)
+		_, _ = pool.Exec(ctx, `DELETE FROM public.tenants WHERE tenant_id = $1`, tenantID)
 		pool.Close()
 	}
 	t.Cleanup(env.cleanup)
@@ -296,7 +311,7 @@ func TestBudgetCapDeniesWith402(t *testing.T) {
 	// Insert one cost_events row that equals the tenant's budget so the
 	// next request sums to spend == cap (deny is >= cap).
 	_, err := env.pool.Exec(ctx, `
-		INSERT INTO cost_events (request_id, tenant_id, event_ts, cost_cents, provider, model)
+		INSERT INTO public.cost_events (request_id, tenant_id, event_ts, cost_cents, provider, model)
 		VALUES ($1, $2, now(), 99999, 'test', 'test-model')
 	`, uuid.Must(uuid.NewV7()).String(), env.tenantID)
 	if err != nil {
@@ -358,7 +373,7 @@ func TestCostEventsWebhookRoundtrip(t *testing.T) {
 	var costCents int64
 	var model string
 	err = env.pool.QueryRow(context.Background(),
-		`SELECT cost_cents, model FROM cost_events WHERE request_id = $1`, requestID,
+		`SELECT cost_cents, model FROM public.cost_events WHERE request_id = $1`, requestID,
 	).Scan(&costCents, &model)
 	if err != nil {
 		t.Fatalf("cost_events row not found: %v", err)
@@ -410,7 +425,7 @@ func TestCostEventsWebhookIdempotency(t *testing.T) {
 
 	var count int
 	err := env.pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM cost_events WHERE request_id = $1`, requestID,
+		`SELECT COUNT(*) FROM public.cost_events WHERE request_id = $1`, requestID,
 	).Scan(&count)
 	if err != nil {
 		t.Fatalf("count cost_events: %v", err)
@@ -418,4 +433,125 @@ func TestCostEventsWebhookIdempotency(t *testing.T) {
 	if count != 1 {
 		t.Errorf("idempotency: got %d rows, want 1 (re-POST should DO NOTHING)", count)
 	}
+}
+
+// TestBrainExtensionsLoaded (PR-E): pg_extension contains both vector and
+// age after the gateway boots and migrations run. Same shape as the
+// verifyExtensions() boot-time check in brain.go — this test exists so
+// the failure mode "migration silently dropped its CREATE EXTENSION"
+// surfaces in CI instead of in production.
+func TestBrainExtensionsLoaded(t *testing.T) {
+	env := setupEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rows, err := env.pool.Query(ctx,
+		`SELECT extname FROM pg_extension WHERE extname IN ('vector', 'age') ORDER BY extname`,
+	)
+	if err != nil {
+		t.Fatalf("query pg_extension: %v", err)
+	}
+	defer rows.Close()
+
+	var found []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		found = append(found, name)
+	}
+	if len(found) != 2 || found[0] != "age" || found[1] != "vector" {
+		t.Errorf("expected [age vector] in pg_extension, got %v", found)
+	}
+}
+
+// TestBrainEmbeddingsRoundtrip (PR-E): insert a vector, query the
+// nearest neighbor by cosine similarity, confirm round-trip distance is
+// below threshold. The simplest exercise of the pgvector extension
+// that proves the migration's vector(1024) column + ivfflat index work
+// end-to-end through the same pgxpool the gateway uses.
+func TestBrainEmbeddingsRoundtrip(t *testing.T) {
+	env := setupEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Construct a unit vector with all weight on the first coordinate.
+	// Inserted twice; nearest-neighbor query against itself should
+	// return cosine distance 0 (or numerically near zero).
+	vec := buildUnitVector(1024)
+	vecLit := vectorLiteral(vec)
+
+	for i := 0; i < 2; i++ {
+		if _, err := env.pool.Exec(ctx, `
+			INSERT INTO public.brain_embeddings
+				(tenant_id, source_kind, source_uri, chunk_text, embedding, metadata)
+			VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb)
+		`, env.tenantID, "test", fmt.Sprintf("uri-%d", i), "chunk", vecLit, `{}`); err != nil {
+			t.Fatalf("insert embedding %d: %v", i, err)
+		}
+	}
+
+	var distance float64
+	err := env.pool.QueryRow(ctx, `
+		SELECT (embedding <=> $1::vector) AS distance
+		FROM public.brain_embeddings
+		WHERE tenant_id = $2
+		ORDER BY distance
+		LIMIT 1
+	`, vecLit, env.tenantID).Scan(&distance)
+	if err != nil {
+		t.Fatalf("nearest neighbor query: %v", err)
+	}
+	if distance > 0.001 {
+		t.Errorf("expected near-zero cosine distance for identical vectors, got %f", distance)
+	}
+
+	// Clean up this test's rows so it doesn't leak across runs.
+	_, _ = env.pool.Exec(ctx,
+		`DELETE FROM public.brain_embeddings WHERE tenant_id = $1`, env.tenantID)
+}
+
+// TestBrainGraphCreated (PR-E): the brain_graph AGE graph exists after
+// migration. AGE's create_graph writes catalog rows visible in
+// ag_catalog.ag_graph; this test confirms the multi-step AGE boot
+// (LOAD, search_path, create_graph) actually persisted to the catalog.
+func TestBrainGraphCreated(t *testing.T) {
+	env := setupEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// ag_catalog is on the search_path via ALTER DATABASE in
+	// 0005_brain.sql, but we name it explicitly here so the test is
+	// robust to search_path drift.
+	var graphName string
+	err := env.pool.QueryRow(ctx,
+		`SELECT name FROM ag_catalog.ag_graph WHERE name = 'brain_graph'`,
+	).Scan(&graphName)
+	if err != nil {
+		t.Fatalf("ag_catalog.ag_graph query: %v", err)
+	}
+	if graphName != "brain_graph" {
+		t.Errorf("expected brain_graph, got %q", graphName)
+	}
+}
+
+// buildUnitVector returns a unit vector of length n with all weight on
+// the first coordinate. Used by TestBrainEmbeddingsRoundtrip to
+// construct deterministic test embeddings.
+func buildUnitVector(n int) []float32 {
+	v := make([]float32, n)
+	v[0] = 1.0
+	return v
+}
+
+// vectorLiteral formats a []float32 as pgvector's text literal:
+// "[1.0,0.0,0.0,...]". pgx 5 doesn't ship a native vector type, so we
+// send the literal and cast on the server side via ::vector.
+func vectorLiteral(v []float32) string {
+	parts := make([]string, len(v))
+	for i, x := range v {
+		parts[i] = fmt.Sprintf("%g", x)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }

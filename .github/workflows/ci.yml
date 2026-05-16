@@ -40,39 +40,24 @@ jobs:
           govulncheck ./...
 
   gateway-integration:
-    # Stage 0 / PR-A: end-to-end test for the gateway against real
-    # Postgres + LiteLLM service containers. Image tags are pinned per
-    # the "Service image pins" table in CLAUDE.md and must move in
-    # lock-step with deploy/compose/docker-compose.yml.
-    #
-    # Service health-cmd options mirror the healthchecks in the compose
-    # file. GitHub Actions blocks `steps` from starting until every
-    # service reports healthy — the analogue of compose's
-    # `depends_on: service_healthy` on the developer's host.
+    # Stage 0 / PR-A established the gateway integration test against
+    # real Postgres + LiteLLM service containers. Stage 1 / PR-E
+    # replaces the postgres:17.9-alpine GHA service container with the
+    # locally-built postgres-brain image (pgvector + AGE), because GHA
+    # service containers don't support locally-built images. Fork B
+    # per PR-E's verification round: build the image in a setup step,
+    # run via `docker run -d`, poll `pg_isready` until ready, then run
+    # the integration tests. Same shape as the gateway-as-subprocess
+    # pattern in agent-runner-integration (PR-C precedent).
     #
     # Temporal is deliberately not started here: PR-A's gateway does
-    # not yet talk to it. PR-C adds Temporal when the agent-runner
-    # ships.
+    # not yet talk to it. agent-runner-integration adds Temporal.
     name: gateway-integration
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: kernel
     services:
-      postgres:
-        image: postgres:17.9-alpine
-        env:
-          POSTGRES_USER: galileo
-          POSTGRES_PASSWORD: galileo
-          POSTGRES_DB: galileo
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U galileo -d galileo"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-          --health-start-period 10s
       litellm:
         # LiteLLM's runtime image (cgr.dev/chainguard/wolfi-base) ships
         # neither curl nor wget — just bash, openssl, nodejs, npm,
@@ -112,8 +97,38 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: kernel/go.sum
+      - name: build postgres-brain image
+        # PR-E custom Postgres image (pgvector + AGE on PG17). Built
+        # locally per Fork B; not published to GHCR yet (the ≥3-custom-
+        # images trigger in CLAUDE.md hasn't fired).
+        run: docker build -t postgres-brain:ci ../deploy/compose/postgres-brain
+      - name: start postgres-brain
+        run: |
+          docker run -d --name postgres-brain \
+            -e POSTGRES_USER=galileo \
+            -e POSTGRES_PASSWORD=galileo \
+            -e POSTGRES_DB=galileo \
+            -p 5432:5432 \
+            postgres-brain:ci
+          # Same bounded-retry shape as the observability poller in
+          # the test setup. pg_isready in the running container is the
+          # cleanest readiness check.
+          for i in $(seq 1 30); do
+            if docker exec postgres-brain pg_isready -U galileo -d galileo; then
+              echo "postgres-brain ready"
+              break
+            fi
+            sleep 1
+          done
       - name: gateway integration tests
         run: go test -tags=gateway_integration -count=1 -v ./cmd/gateway/...
+      - name: stop postgres-brain
+        if: always()
+        run: |
+          docker logs postgres-brain > /tmp/postgres-brain.log 2>&1 || true
+          docker stop postgres-brain || true
+          docker rm postgres-brain || true
+          tail -50 /tmp/postgres-brain.log || true
 
   python:
     # PR-D (Week 4) introduces the Python runtime to the repo: 10 runtime
@@ -221,14 +236,18 @@ jobs:
           git diff --exit-code kernel/gen/ || { echo "::error::kernel/gen/ is out of date — run 'make generate' and commit"; exit 1; }
 
   agent-runner-integration:
-    # Stage 0 / PR-C: end-to-end test for the agent-runner + workflow +
-    # activity against real Temporal + Postgres + LiteLLM + the gateway
-    # subprocess. Image tags pinned per CLAUDE.md "Service image pins".
-    #
-    # Temporal service container brings in Postgres-as-a-dependency at
-    # the GHA layer; the gateway is run as a subprocess inside a step
-    # (no GHA service-container fit, same shape as PR-B's observability
-    # honest-note for OTel + Jaeger).
+    # Stage 0 / PR-C established the agent-runner integration test
+    # against real Temporal + Postgres + LiteLLM. Stage 1 / PR-E
+    # replaces both the postgres + temporal GHA service containers
+    # with locally-built / step-launched docker containers on a shared
+    # `galileo-ci` network. Reason: postgres-brain (the PR-E custom
+    # image with pgvector + AGE) can't run as a GHA service container
+    # because GHA service containers don't support locally-built
+    # images. Temporal needs to reach postgres-brain by hostname; the
+    # cleanest fix is to put both on the same docker network and
+    # launch them in steps (Fork B per PR-E's verification round).
+    # Temporal uses postgres-brain as its metadata store; the Brain
+    # extensions don't interfere with Temporal's own tables.
     #
     # The agent_runner_integration tag excludes these from the default
     # go test pass.
@@ -238,36 +257,6 @@ jobs:
       run:
         working-directory: kernel
     services:
-      postgres:
-        image: postgres:17.9-alpine
-        env:
-          POSTGRES_USER: galileo
-          POSTGRES_PASSWORD: galileo
-          POSTGRES_DB: galileo
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U galileo -d galileo"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-          --health-start-period 10s
-      temporal:
-        image: temporalio/auto-setup:1.29.6.1
-        env:
-          DB: postgres12
-          DB_PORT: "5432"
-          POSTGRES_USER: galileo
-          POSTGRES_PWD: galileo
-          POSTGRES_SEEDS: postgres
-        ports:
-          - 7233:7233
-        options: >-
-          --health-cmd "temporal operator cluster health --address temporal:7233"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-          --health-start-period 60s
       litellm:
         image: ghcr.io/berriai/litellm:v1.83.14-stable.patch.3
         env:
@@ -294,6 +283,46 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: kernel/go.sum
+      - name: build postgres-brain image
+        run: docker build -t postgres-brain:ci ../deploy/compose/postgres-brain
+      - name: create docker network
+        run: docker network create galileo-ci
+      - name: start postgres-brain
+        run: |
+          docker run -d --name postgres --network galileo-ci \
+            -e POSTGRES_USER=galileo \
+            -e POSTGRES_PASSWORD=galileo \
+            -e POSTGRES_DB=galileo \
+            -p 5432:5432 \
+            postgres-brain:ci
+          for i in $(seq 1 30); do
+            if docker exec postgres pg_isready -U galileo -d galileo; then
+              echo "postgres ready"
+              break
+            fi
+            sleep 1
+          done
+      - name: start temporal
+        run: |
+          docker run -d --name temporal --network galileo-ci \
+            -e DB=postgres12 \
+            -e DB_PORT=5432 \
+            -e POSTGRES_USER=galileo \
+            -e POSTGRES_PWD=galileo \
+            -e POSTGRES_SEEDS=postgres \
+            -p 7233:7233 \
+            temporalio/auto-setup:1.29.6.1
+          # Same bounded-retry shape as the observability poller. The
+          # 60s timeout covers Temporal cluster health, which includes
+          # the worker + frontend services starting against a cold
+          # postgres-brain — slow CI runners need the headroom.
+          for i in $(seq 1 60); do
+            if docker exec temporal temporal operator cluster health --address temporal:7233 2>/dev/null; then
+              echo "temporal ready"
+              break
+            fi
+            sleep 1
+          done
       - name: generate jwt keypair
         run: go run ./cmd/jwt-tool genkey -dir auth/dev-keys
       - name: start gateway subprocess
@@ -312,12 +341,31 @@ jobs:
             if curl -fsS http://localhost:8080/healthz; then break; fi
             sleep 1
           done
+          # Fail loudly if gateway didn't come up. PR-E iteration 2
+          # finding: this job was reporting SUCCESS despite gateway-
+          # startup migration errors because the loop just timed out
+          # and proceeded. Same fail-loud posture as PR-A's
+          # Postgres-unavailable check.
+          if ! curl -fsS http://localhost:8080/healthz >/dev/null; then
+            echo "::error::gateway subprocess failed to start within 30s; tail of /tmp/gateway.log:"
+            tail -50 /tmp/gateway.log
+            exit 1
+          fi
       - name: agent-runner integration tests
         env:
           GALILEO_AGENT_JWT_PRIVATE_KEY_PATH: ${{ github.workspace }}/kernel/auth/dev-keys/private.pem
         run: go test -tags=agent_runner_integration -count=1 -v ./cmd/agent-runner/...
-      - name: stop gateway subprocess
+      - name: stop services
         if: always()
         run: |
           if [ -f /tmp/gateway.pid ]; then kill "$(cat /tmp/gateway.pid)" || true; fi
           cat /tmp/gateway.log || true
+          docker logs temporal > /tmp/temporal.log 2>&1 || true
+          docker logs postgres > /tmp/postgres.log 2>&1 || true
+          docker stop temporal postgres || true
+          docker rm temporal postgres || true
+          docker network rm galileo-ci || true
+          echo "--- postgres-brain logs (last 50 lines) ---"
+          tail -50 /tmp/postgres.log || true
+          echo "--- temporal logs (last 50 lines) ---"
+          tail -50 /tmp/temporal.log || true

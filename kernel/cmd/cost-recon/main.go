@@ -103,7 +103,7 @@ func run(ctx context.Context, cfg config, logger *log.Logger) error {
 
 	rows, err := pool.Query(ctx, `
 		SELECT request_id, event_ts, cost_cents
-		FROM cost_events
+		FROM public.cost_events
 		WHERE tenant_id = $1 AND event_ts >= $2
 		ORDER BY event_ts ASC
 	`, cfg.tenantID, time.Now().Add(-cfg.since))

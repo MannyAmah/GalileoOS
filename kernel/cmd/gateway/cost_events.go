@@ -114,7 +114,7 @@ func (s *Server) insertCostEvent(ctx context.Context, p liteLLMPayload, tenantID
 	costCents := dollarsToCents(p.ResponseCost)
 	ts := time.Unix(int64(p.EndTime), int64((p.EndTime-math.Floor(p.EndTime))*1e9)).UTC()
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO cost_events
+		INSERT INTO public.cost_events
 			(request_id, tenant_id, event_ts, cost_cents, provider, model, litellm_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (request_id) DO NOTHING

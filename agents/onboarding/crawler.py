@@ -257,18 +257,18 @@ def _upsert_manifest_status(
     if manifest_json is None:
         conn.execute(
             """
-            INSERT INTO tenant_manifests (tenant_id, source_kind, crawl_status, crawl_started_at)
+            INSERT INTO public.tenant_manifests (tenant_id, source_kind, crawl_status, crawl_started_at)
             VALUES (%s, %s, %s, NOW())
             ON CONFLICT (tenant_id, source_kind) DO UPDATE
             SET crawl_status = EXCLUDED.crawl_status,
-                crawl_started_at = COALESCE(tenant_manifests.crawl_started_at, NOW())
+                crawl_started_at = COALESCE(public.tenant_manifests.crawl_started_at, NOW())
             """,
             (tenant_id, kind.value, status),
         )
     else:
         conn.execute(
             """
-            INSERT INTO tenant_manifests (
+            INSERT INTO public.tenant_manifests (
                 tenant_id, source_kind, crawl_status,
                 crawl_completed_at, document_count, total_bytes, manifest_json
             ) VALUES (%s, %s, %s, NOW(), %s, %s, %s::jsonb)

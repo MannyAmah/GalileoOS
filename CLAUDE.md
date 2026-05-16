@@ -157,6 +157,21 @@ When a CI pin moves (security update, ecosystem bump), the matching devcontainer
 | go.temporal.io/sdk + go.temporal.io/api | `kernel/go.mod require` | (Go module dep) | `v1.43.0` / `v1.62.11` (SDK and API package cross-pinned per the canonical samples-go go.mod) |
 | buf.build/protocolbuffers/go (protoc-gen-go plugin) | `schemas/buf.gen.yaml` | (BSR plugin) | `v1.36.11` |
 
+Python runtime deps (introduced in PR-D / Week 4) pin in `agents/pyproject.toml`. The devcontainer doesn't install Python libraries separately — they're pulled by `pip install -e .[dev]` from the pyproject. Co-change discipline applies to `agents/pyproject.toml` pins the same way it does to `kernel/go.mod`: bumping a version is a deliberate PR-level change.
+
+| Python package | Pyproject source | Current pin | Notes |
+| --- | --- | --- | --- |
+| langgraph | `agents/pyproject.toml dependencies` | `1.2.*` | Agent workflow graph; MIT, Python ≥3.10. |
+| mcp | `agents/pyproject.toml dependencies` | `1.27.*` | Model Context Protocol Python SDK. Pulls `pyjwt[crypto]` transitively which would itself provide `cryptography`, but we pin `cryptography` explicitly because the credentials store is load-bearing security code. |
+| psycopg[binary] | `agents/pyproject.toml dependencies` | `3.3.*` | Postgres driver. `[binary]` extras pulls the prebuilt wheels (the `psycopg-binary` package). |
+| opentelemetry-sdk + opentelemetry-exporter-otlp | `agents/pyproject.toml dependencies` | `1.41.*` | SDK + OTLP exporter cross-pinned, same ecosystem-pair discipline as the Go OTel pair. Compat with the `otel-collector:0.152.0` substrate from PR-B. |
+| slack-sdk | `agents/pyproject.toml dependencies` | `3.41.*` | Vendor-maintained Slack Python SDK; replaces the deprecated `@modelcontextprotocol/server-slack` per ADR-0005. |
+| google-api-python-client | `agents/pyproject.toml dependencies` | `2.196.*` | Vendor-maintained Google Drive SDK; replaces the deprecated `@modelcontextprotocol/server-gdrive` per ADR-0005. |
+| cryptography | `agents/pyproject.toml dependencies` | `46.0.*` | Explicit pin even though transitively available via `mcp` → `pyjwt[crypto]`; the credentials store's HKDF-SHA256 + AES-256-GCM path must not depend on transitive availability. Initial PR-D draft was `44.0.*`; bumped to `46.0.*` during PR-D's `pip-audit` to clear GHSA-r6ph-v2qm-q3c2 and GHSA-m959-cc7f-wv43. |
+| temporalio | `agents/pyproject.toml dependencies` | `1.27.*` | Python Temporal SDK for the `galileo-onboarding-crew` worker. |
+| pyyaml | `agents/pyproject.toml dependencies` | `6.0.*` | CLI YAML config parsing. `types-PyYAML` pinned in `[project.optional-dependencies] dev` for mypy strictness. |
+| pytest + pytest-asyncio | `agents/pyproject.toml [dev]` | `8.*` / `0.24.*` | Test runner; async-mode auto. |
+
 The Rust pin policy is explicit: "latest" while no Rust code exists in the repo (no CI to align to). The Stage 2 PR that introduces Tauri adds both the CI Rust pin and the matching devcontainer pin in the same commit.
 
 Go module deps (like `prometheus/client_golang`) are pinned in `kernel/go.mod`. The devcontainer doesn't install Go libraries separately — they're pulled by `go build` / `go test` from go.sum. The co-change discipline still applies to `kernel/go.mod` pins: bumping the version is a deliberate PR-level change, not a `go mod tidy` side effect.
@@ -174,6 +189,7 @@ Go module deps (like `prometheus/client_golang`) are pinned in `kernel/go.mod`. 
 | LiteLLM | `ghcr.io/berriai/litellm:<version>` | `v1.83.14-stable.patch.3` | bash `</dev/tcp/127.0.0.1/4000` (wolfi-base image lacks curl/wget) |
 | Jaeger | `jaegertracing/all-in-one:<version>` | `2.18.0` | test-setup polls `http://127.0.0.1:16686/` (no in-container healthcheck) |
 | OTel collector | `otel/opentelemetry-collector-contrib:<version>` | `0.152.0` | test-setup polls `http://127.0.0.1:13133/` (image is `FROM scratch`; no shell) |
+| GitHub MCP server | `ghcr.io/github/github-mcp-server:<version>` | `v1.0.4` | Stage 0 Onboarding Crew github connector (PR-D / ADR-0005). Invoked as `docker run -i --rm --init` subprocess by `agents/onboarding/connector.py`; no long-running container, no docker healthcheck. The `--init` flag is required to forward SIGTERM cleanly during Temporal workflow cancellation. |
 
 LiteLLM's docs warn against using `main-stable` (their floating tag) — pin to specific stable releases for reproducibility. See PR-A of Week 3 for the precedent that committed the project to image-level pinning.
 
@@ -190,7 +206,7 @@ The 600-line PR size guideline can be exceeded when a PR is a single coherent ar
 Categories observed so far:
 - **Calibration artifact** (PR #10): apparatus + mocks + self-validation tests, indivisible because the apparatus's correctness depends on its own validation tests.
 - **Runtime introduction** (PR #15 / PR-A): code + integration test + compose stack, indivisible because the code's correctness depends on runtime verification against external services.
-- **Plan-deviation with code** (PR-B): closeout + plan edits + ADR + the deviation code itself, indivisible because the deviation artifacts document a decision the code implements in the same review surface.
+- **Plan-deviation with code** (PR #17 / PR-B, PR-D): closeout + plan edits + ADR + the deviation code itself, indivisible because the deviation artifacts document a decision the code implements in the same review surface. **Second instance of this category in PR-D** (per-source MCP dispatch reconsidered; ADR-0005). Recurring shape: an inline-plan discovery pass surfaces a structural mismatch large enough to need the four-part deviation template, and the artifacts are inseparable from the code that implements them.
 
 Future exceptions either fit one of these categories (cite prior PR explicitly) or earn a new named category (structural argument required in the PR description).
 
@@ -231,6 +247,8 @@ Concrete state as of this writing: runtime `1.26`, `kernel/go.mod` directive `go
 Meta-process decisions that don't live in the spec but persist across sessions:
 
 - **Stage 0 senior-engineer install-walkthrough test:** external engineer is already identified by Emmanuel (confirmed 2026-05-13). Do not remind about identification or surface a deadline. Surface the reminder when Week 4's Onboarding Crew scaffolding lands and the install walkthrough is ready to run end-to-end — at that point the cold-engineer session needs to be *scheduled*, not the identification confirmed. Identification artifact (name + written commitment + cold-state) belongs in `docs/closeouts/STAGE_0_GATE.md` when the gate runs.
+
+- **Deferred CI fixture (PR-D context):** Real-GitHub CI integration fixture is deferred. The github dispatch path (Connector → Docker subprocess → `github-mcp-server`) is exercised by the senior-engineer walkthrough but not by CI. Reconsideration triggers: (a) Stage 1's first multi-agent github usage that modifies the connector dispatch, or (b) the first observed regression in the github dispatch path that the walkthrough catches. Either triggers a dedicated PR that introduces GitHub Actions secrets management (e.g., `GITHUB_FIXTURE_PAT`) alongside the real-github integration test — secrets-management is the reason the fixture wasn't bundled into PR-D. Same shape as the 402-vs-429 reconsideration trigger in `kernel/cmd/gateway/budget.go` and the snake_case-vs-camelCase trigger in `web/lib/api-types.ts`.
 
 Review-conversation decisions don't auto-propagate to Claude Code's session state unless they're written into the repo. Any meta-process decision ("stop reminding," "changed cadence," "new convention") gets an artifact here so it persists.
 

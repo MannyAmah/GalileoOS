@@ -23,7 +23,14 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS age;
-LOAD 'age';
+
+-- LOAD 'age' was dropped here in PR-E iteration 3: bare LOAD inside
+-- the migration tx interacted badly with the rest of the multi-
+-- statement body (the AGE README warns about transaction semantics
+-- for DDL-like functions in autocommit-disabled clients). CREATE
+-- EXTENSION is sufficient to register AGE's functions for the
+-- session; fully-qualified ag_catalog.* calls below don't need the
+-- search_path manipulated either.
 
 -- Make ag_catalog available on every future connection without per-
 -- connection SET search_path discipline. Safe because ag_catalog
@@ -98,6 +105,23 @@ CREATE INDEX IF NOT EXISTS brain_events_tenant_ts_idx
 -- the search_path change above until the transaction commits — within
 -- the same tx the function-name resolution falls back to the original
 -- search_path. Same shape as the AGE README's autocommit-disabled
--- client warning. PR-E iteration 2 finding: the bare call returns
+-- client warning. PR-E iteration 2 finding: the bare call returned
 -- SQLSTATE 42883 (function does not exist) inside the migration tx.
-SELECT ag_catalog.create_graph('brain_graph');
+--
+-- Wrapped in a DO/IF NOT EXISTS guard for idempotency. AGE's
+-- create_graph is not idempotent on its own (raises SQLSTATE 3F000
+-- "graph already exists"); the gateway integration tests re-run
+-- RunMigrations per test (each test's setupEnv calls a fresh pool),
+-- and PR-E iteration 2 surfaced the scenario where the migration's
+-- schema_migrations bookkeeping interacts oddly with AGE catalog
+-- writes — the safe fix is to make the migration idempotent
+-- regardless of schema_migrations state, matching the IF NOT EXISTS
+-- pattern used by every other DDL statement in this file.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM ag_catalog.ag_graph WHERE name = 'brain_graph'
+    ) THEN
+        PERFORM ag_catalog.create_graph('brain_graph');
+    END IF;
+END $$;

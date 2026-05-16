@@ -341,6 +341,16 @@ jobs:
             if curl -fsS http://localhost:8080/healthz; then break; fi
             sleep 1
           done
+          # Fail loudly if gateway didn't come up. PR-E iteration 2
+          # finding: this job was reporting SUCCESS despite gateway-
+          # startup migration errors because the loop just timed out
+          # and proceeded. Same fail-loud posture as PR-A's
+          # Postgres-unavailable check.
+          if ! curl -fsS http://localhost:8080/healthz >/dev/null; then
+            echo "::error::gateway subprocess failed to start within 30s; tail of /tmp/gateway.log:"
+            tail -50 /tmp/gateway.log
+            exit 1
+          fi
       - name: agent-runner integration tests
         env:
           GALILEO_AGENT_JWT_PRIVATE_KEY_PATH: ${{ github.workspace }}/kernel/auth/dev-keys/private.pem

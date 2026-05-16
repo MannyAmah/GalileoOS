@@ -92,4 +92,12 @@ CREATE INDEX IF NOT EXISTS brain_events_tenant_ts_idx
 -- networks. Per-tenant graph isolation lives at the application
 -- layer for Stage 1 (tenant_id label on every vertex); promoted to
 -- per-tenant graphs if scale requires (Stage 2+ trigger).
-SELECT create_graph('brain_graph');
+--
+-- Fully qualified `ag_catalog.create_graph` (not bare `create_graph`)
+-- because pgx's single-Exec multi-statement protocol doesn't activate
+-- the search_path change above until the transaction commits — within
+-- the same tx the function-name resolution falls back to the original
+-- search_path. Same shape as the AGE README's autocommit-disabled
+-- client warning. PR-E iteration 2 finding: the bare call returns
+-- SQLSTATE 42883 (function does not exist) inside the migration tx.
+SELECT ag_catalog.create_graph('brain_graph');

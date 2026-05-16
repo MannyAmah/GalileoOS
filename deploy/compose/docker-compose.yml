@@ -12,8 +12,14 @@
 #     in Week 4.
 
 services:
+  # PR-E (Stage 1 / ADR-0006) replaces the `postgres:17.9-alpine` image
+  # with a custom build at `./postgres-brain/` that bundles pgvector +
+  # Apache AGE on PostgreSQL 17. Same `galileo` database; same
+  # credentials; healthcheck unchanged. See
+  # `deploy/compose/postgres-brain/README.md` for the maintenance posture.
   postgres:
-    image: postgres:17.9-alpine
+    build:
+      context: ./postgres-brain
     environment:
       POSTGRES_USER: galileo
       POSTGRES_PASSWORD: galileo

@@ -65,6 +65,10 @@ func main() {
 		cancel()
 		logger.Fatalf("migrations: %v", err)
 	}
+	if err := verifyExtensions(migrationCtx, pool); err != nil {
+		cancel()
+		logger.Fatalf("brain extensions: %v", err)
+	}
 	cancel()
 
 	otelShutdown, err := InitTracer(ctx, otelEndpoint)

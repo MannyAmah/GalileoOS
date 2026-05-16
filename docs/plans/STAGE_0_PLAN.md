@@ -332,6 +332,14 @@ Examples that would trigger a `plan-deviation` issue:
 
 This plan goes from DRAFT to APPROVED when Emmanuel explicitly says so in conversation (or comments approval on the PR if we open one for it). Week 1 work begins only after APPROVED. The current status is **DRAFT — awaiting sign-off**.
 
+## 10. Stage 0 closed — pointer forward to Stage 1
+
+**Status as of 2026-05-16:** Stage 0 code and docs landed through PR #20 (Week 4 PR-D). Stage 0 gate-test results are pending the senior-engineer install-walkthrough session; the Stage 0 closeout is open as draft PR #21 with §1–4, 6, 7 finalized and §5 reserved for the post-walkthrough fill-in.
+
+**This document (STAGE_0_PLAN.md) is now a historical artifact.** The working execution surface for Stage 1 is [`docs/plans/STAGE_1_PLAN.md`](STAGE_1_PLAN.md), created in PR-E (2026-05-16). Stage 1's scope decision is recorded in [`docs/decisions/0006-stage1-scope-canonical-with-path2-calibration.md`](../decisions/0006-stage1-scope-canonical-with-path2-calibration.md); the Stage 0 → Stage 1 architectural carry-over ledger is in [`docs/closeouts/CLOSEOUT_STAGE0.md`](../closeouts/CLOSEOUT_STAGE0.md) §4.
+
+Edits to STAGE_0_PLAN.md after 2026-05-16 are restricted to **historical-record corrections only** (typo fixes, broken-link repairs). Active execution planning happens in STAGE_1_PLAN.md.
+
 ---
 
-*This document is part of the Galileo OS planning corpus. It is not the spec — the spec is `docs/galileo_os_infrastructure_plan.md`. This document is how Stage 0 executes against that spec without softening any of its gates.*
+*This document is part of the Galileo OS planning corpus. It is not the spec — the spec is `docs/galileo_os_infrastructure_plan.md`. This document is how Stage 0 executed against that spec without softening any of its gates.*

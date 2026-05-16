@@ -86,7 +86,7 @@ def _persist_credentials(
             ciphertext = store.encrypt(plaintext, associated_data=_aad(tenant_id, kind))
             conn.execute(
                 """
-                INSERT INTO tenant_credentials (tenant_id, source_kind, encrypted_payload)
+                INSERT INTO public.tenant_credentials (tenant_id, source_kind, encrypted_payload)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (tenant_id, source_kind) DO UPDATE
                 SET encrypted_payload = EXCLUDED.encrypted_payload, updated_at = NOW()

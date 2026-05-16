@@ -103,7 +103,7 @@ func main() {
 func loadManifests(ctx context.Context, pool *pgxpool.Pool, tenantID string) ([]manifestRow, error) {
 	const query = `
 		SELECT source_kind, crawl_status, crawl_started_at, crawl_completed_at, document_count
-		FROM tenant_manifests
+		FROM public.tenant_manifests
 		WHERE tenant_id = $1
 		ORDER BY source_kind
 	`
@@ -127,7 +127,7 @@ func loadManifests(ctx context.Context, pool *pgxpool.Pool, tenantID string) ([]
 func loadCostCents(ctx context.Context, pool *pgxpool.Pool, tenantID string) (int64, error) {
 	const query = `
 		SELECT COALESCE(SUM(cost_cents), 0)
-		FROM cost_events
+		FROM public.cost_events
 		WHERE tenant_id = $1
 	`
 	var total int64

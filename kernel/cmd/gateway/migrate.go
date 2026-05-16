@@ -54,7 +54,7 @@ var migrationFilenameRE = regexp.MustCompile(`^(\d{4})_[a-z0-9_]+\.sql$`)
 // execute.
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
+		CREATE TABLE IF NOT EXISTS public.schema_migrations (
 			version    INT         PRIMARY KEY,
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)
@@ -92,7 +92,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 func loadAppliedVersions(ctx context.Context, pool *pgxpool.Pool) (map[int]struct{}, error) {
-	rows, err := pool.Query(ctx, `SELECT version FROM schema_migrations`)
+	rows, err := pool.Query(ctx, `SELECT version FROM public.schema_migrations`)
 	if err != nil {
 		return nil, fmt.Errorf("read schema_migrations: %w", err)
 	}
@@ -153,7 +153,7 @@ func applyMigration(ctx context.Context, pool *pgxpool.Pool, version int, filena
 	if _, err := tx.Exec(ctx, body); err != nil {
 		return fmt.Errorf("execute %s: %w", filename, err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO public.schema_migrations (version) VALUES ($1)`, version); err != nil {
 		return fmt.Errorf("record %s: %w", filename, err)
 	}
 	return tx.Commit(ctx)

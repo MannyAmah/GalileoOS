@@ -52,7 +52,7 @@ func readMonthlySpend(ctx context.Context, pool *pgxpool.Pool, tenantID string) 
 	var spent int64
 	err := pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(cost_cents), 0)::BIGINT
-		FROM cost_events
+		FROM public.cost_events
 		WHERE tenant_id = $1
 		  AND event_ts >= date_trunc('month', now() AT TIME ZONE 'UTC')
 	`, tenantID).Scan(&spent)

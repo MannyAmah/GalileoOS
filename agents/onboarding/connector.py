@@ -66,7 +66,7 @@ def _load_credential(
     kind: SourceKind,
 ) -> bytes:
     row = conn.execute(
-        "SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id = %s AND source_kind = %s",
+        "SELECT encrypted_payload FROM public.tenant_credentials WHERE tenant_id = %s AND source_kind = %s",
         (tenant_id, kind.value),
     ).fetchone()
     if row is None:
